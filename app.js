@@ -1,6 +1,14 @@
 const CLIENT_ID = '232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleusercontent.com';
 let allPhotos = [];
 let globalToken = null;
+let pollInterval = null;
+
+function shuffleArray(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+}
 
 document.getElementById('login-btn').onclick = function() {
     const client = google.accounts.oauth2.initTokenClient({
@@ -33,7 +41,9 @@ async function createAndOpenSession(token) {
 
 async function pollPhotos(token, sessionId) {
     console.log("사진 선택 대기 중...");
-    const interval = setInterval(async () => {
+    if (pollInterval) clearInterval(pollInterval);
+    
+    pollInterval = setInterval(async () => {
         const res = await fetch('https://photospicker.googleapis.com/v1/mediaItems?sessionId=' + sessionId, {
             headers: { 'Authorization': 'Bearer ' + token }
         });
@@ -41,8 +51,9 @@ async function pollPhotos(token, sessionId) {
         const data = await res.json();
         if (data.mediaItems?.length > 0) {
             allPhotos.push(...data.mediaItems);
+            shuffleArray(allPhotos);
             console.log("현재 누적 사진 수:", allPhotos.length);
-            clearInterval(interval);
+            clearInterval(pollInterval);
             
             if(document.getElementById('slideshow').style.display === 'none') {
                 startSlideshow(token);
@@ -54,7 +65,6 @@ async function pollPhotos(token, sessionId) {
 
 function startSlideshow(token) {
     document.getElementById('slideshow').style.display = 'block';
-    
     let idx = 0, showingImg1 = true;
     const img1 = document.getElementById('img1'), img2 = document.getElementById('img2'), bg = document.getElementById('bg-layer');
     
