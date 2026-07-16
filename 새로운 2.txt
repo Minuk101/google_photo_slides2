@@ -1,0 +1,5 @@
+클라이언트 ID
+232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleusercontent.com
+이 대화상자를 닫으면 더 이상 클라이언트 보안 비밀번호를 보거나 다운로드할 수 없습니다. 아래 정보를 복사하거나 다운로드하여 안전하게 보관해야 합니다.
+클라이언트 보안 비밀번호
+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
