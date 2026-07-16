@@ -14,10 +14,16 @@ function loadFromStorage() {
     const saved = localStorage.getItem('my_photos');
     if (saved) {
         allPhotos = JSON.parse(saved);
-        console.log("저장된 사진 목록 로드 완료:", allPhotos.length);
         if (allPhotos.length > 0) return true;
     }
     return false;
+}
+
+function resetPhotos() {
+    if(confirm("모든 사진 목록을 초기화할까요?")) {
+        localStorage.removeItem('my_photos');
+        location.reload();
+    }
 }
 
 document.getElementById('login-btn').onclick = function() {
