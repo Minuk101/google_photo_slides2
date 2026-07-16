@@ -1,7 +1,6 @@
 const CLIENT_ID = '232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleusercontent.com';
 let allPhotos = [];
 let globalToken = null;
-let pollInterval = null;
 
 function shuffleArray(array) {
     for (let i = array.length - 1; i > 0; i--) {
@@ -12,9 +11,11 @@ function shuffleArray(array) {
 
 function loadFromStorage() {
     const saved = localStorage.getItem('my_photos');
-    if (saved) {
+    const savedToken = localStorage.getItem('auth_token');
+    if (saved && savedToken) {
         allPhotos = JSON.parse(saved);
-        if (allPhotos.length > 0) return true;
+        globalToken = savedToken;
+        return true;
     }
     return false;
 }
@@ -22,9 +23,18 @@ function loadFromStorage() {
 function resetPhotos() {
     if(confirm("모든 사진 목록을 초기화할까요?")) {
         localStorage.removeItem('my_photos');
+        localStorage.removeItem('auth_token');
         location.reload();
     }
 }
+
+window.onload = () => {
+    if (loadFromStorage()) {
+        document.getElementById('login-btn').style.display = 'none';
+        startSlideshow(globalToken);
+        document.getElementById('add-btn').style.display = 'block';
+    }
+};
 
 document.getElementById('login-btn').onclick = function() {
     const client = google.accounts.oauth2.initTokenClient({
@@ -33,12 +43,14 @@ document.getElementById('login-btn').onclick = function() {
         callback: async (res) => {
             if (res.access_token) {
                 globalToken = res.access_token;
-                if (loadFromStorage()) {
-                    startSlideshow(res.access_token);
-                } else {
-                    createAndOpenSession(res.access_token);
-                }
+                localStorage.setItem('auth_token', res.access_token);
+                const session = await fetch('https://photospicker.googleapis.com/v1/sessions', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + res.access_token }
+                }).then(r => r.json());
+                window.open(session.pickerUri, '_blank');
                 document.getElementById('login-btn').style.display = 'none';
+                pollPhotos(res.access_token, session.id);
             }
         }
     });
@@ -47,23 +59,16 @@ document.getElementById('login-btn').onclick = function() {
 
 async function addMorePhotos() {
     if (!globalToken) return;
-    createAndOpenSession(globalToken);
-}
-
-async function createAndOpenSession(token) {
     const session = await fetch('https://photospicker.googleapis.com/v1/sessions', {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + token }
+        headers: { 'Authorization': 'Bearer ' + globalToken }
     }).then(r => r.json());
     window.open(session.pickerUri, '_blank');
-    pollPhotos(token, session.id);
+    pollPhotos(globalToken, session.id);
 }
 
 async function pollPhotos(token, sessionId) {
-    console.log("사진 선택 대기 중...");
-    if (pollInterval) clearInterval(pollInterval);
-    
-    pollInterval = setInterval(async () => {
+    const interval = setInterval(async () => {
         const res = await fetch('https://photospicker.googleapis.com/v1/mediaItems?sessionId=' + sessionId, {
             headers: { 'Authorization': 'Bearer ' + token }
         });
@@ -73,9 +78,7 @@ async function pollPhotos(token, sessionId) {
             allPhotos.push(...data.mediaItems);
             localStorage.setItem('my_photos', JSON.stringify(allPhotos));
             shuffleArray(allPhotos);
-            console.log("현재 누적 사진 수:", allPhotos.length);
-            clearInterval(pollInterval);
-            
+            clearInterval(interval);
             if(document.getElementById('slideshow').style.display === 'none') {
                 startSlideshow(token);
                 document.getElementById('add-btn').style.display = 'block';
@@ -86,7 +89,6 @@ async function pollPhotos(token, sessionId) {
 
 function startSlideshow(token) {
     document.getElementById('slideshow').style.display = 'block';
-    document.getElementById('add-btn').style.display = 'block';
     let idx = 0, showingImg1 = true;
     const img1 = document.getElementById('img1'), img2 = document.getElementById('img2'), bg = document.getElementById('bg-layer');
     
@@ -94,31 +96,19 @@ function startSlideshow(token) {
         if (allPhotos.length === 0) return;
         const item = allPhotos[idx];
         const url = (item.mediaFile ? item.mediaFile.baseUrl : item.baseUrl) + '=w1920-h1080';
-        
         try {
             const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
             const objectUrl = URL.createObjectURL(await response.blob());
-            
             bg.style.backgroundImage = 'url("' + objectUrl + '")';
-            
             const nextImg = showingImg1 ? img2 : img1;
             const currentImg = showingImg1 ? img1 : img2;
-            
             nextImg.src = objectUrl;
             nextImg.style.opacity = 1;
             currentImg.style.opacity = 0;
-            
             if (currentImg.src.startsWith('blob:')) URL.revokeObjectURL(currentImg.src);
-            
             showingImg1 = !showingImg1;
             idx = (idx + 1) % allPhotos.length;
-        } catch (e) {
-            console.error(e);
-            idx = (idx + 1) % allPhotos.length;
-            next();
-        }
+        } catch (e) { console.error(e); idx = (idx + 1) % allPhotos.length; next(); }
     }
-    
-    next();
-    setInterval(next, 5000);
+    next(); setInterval(next, 5000);
 }
