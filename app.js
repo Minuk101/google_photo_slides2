@@ -1,12 +1,6 @@
 const CLIENT_ID = '232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleusercontent.com';
 let allPhotos = [];
-
-function shuffleArray(array) {
-    for (let i = array.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [array[i], array[j]] = [array[j], array[i]];
-    }
-}
+let globalToken = null;
 
 document.getElementById('login-btn').onclick = function() {
     const client = google.accounts.oauth2.initTokenClient({
@@ -14,18 +8,28 @@ document.getElementById('login-btn').onclick = function() {
         scope: 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly',
         callback: async (res) => {
             if (res.access_token) {
-                const session = await fetch('https://photospicker.googleapis.com/v1/sessions', {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + res.access_token }
-                }).then(r => r.json());
-                window.open(session.pickerUri, '_blank');
+                globalToken = res.access_token;
+                createAndOpenSession(res.access_token);
                 document.getElementById('login-btn').style.display = 'none';
-                pollPhotos(res.access_token, session.id);
             }
         }
     });
     client.requestAccessToken();
 };
+
+async function addMorePhotos() {
+    if (!globalToken) return;
+    createAndOpenSession(globalToken);
+}
+
+async function createAndOpenSession(token) {
+    const session = await fetch('https://photospicker.googleapis.com/v1/sessions', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token }
+    }).then(r => r.json());
+    window.open(session.pickerUri, '_blank');
+    pollPhotos(token, session.id);
+}
 
 async function pollPhotos(token, sessionId) {
     console.log("사진 선택 대기 중...");
@@ -38,6 +42,8 @@ async function pollPhotos(token, sessionId) {
         if (data.mediaItems?.length > 0) {
             allPhotos.push(...data.mediaItems);
             console.log("현재 누적 사진 수:", allPhotos.length);
+            clearInterval(interval);
+            
             if(document.getElementById('slideshow').style.display === 'none') {
                 startSlideshow(token);
                 document.getElementById('add-btn').style.display = 'block';
@@ -48,9 +54,6 @@ async function pollPhotos(token, sessionId) {
 
 function startSlideshow(token) {
     document.getElementById('slideshow').style.display = 'block';
-    
-    // 사진 순서 랜덤 섞기
-    shuffleArray(allPhotos);
     
     let idx = 0, showingImg1 = true;
     const img1 = document.getElementById('img1'), img2 = document.getElementById('img2'), bg = document.getElementById('bg-layer');
