@@ -10,6 +10,16 @@ function shuffleArray(array) {
     }
 }
 
+function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => {
+            alert(`전체화면 오류: ${err.message}`);
+        });
+    } else {
+        document.exitFullscreen();
+    }
+}
+
 document.getElementById('login-btn').onclick = function() {
     const client = google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
@@ -74,7 +84,7 @@ function startSlideshow(token) {
         const url = (item.mediaFile ? item.mediaFile.baseUrl : item.baseUrl) + '=w1920-h1080';
         
         try {
-            const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+            const response = await fetch(url, { headers: 'Authorization: Bearer ' + token });
             const objectUrl = URL.createObjectURL(await response.blob());
             
             bg.style.backgroundImage = 'url("' + objectUrl + '")';

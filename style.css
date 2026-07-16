@@ -2,5 +2,7 @@ body { margin: 0; background: #000; overflow: hidden; height: 100vh; width: 100v
 #slideshow { position: relative; width: 100vw; height: 100vh; }
 .bg-layer { position: absolute; top:0; left:0; width: 100vw; height: 100vh; filter: blur(25px); background-size: cover; background-position: center; opacity: 0.6; z-index: 0; transition: background-image 2s; }
 .main-img { position: absolute; width: 100vw; height: 100vh; object-fit: contain; z-index: 1; opacity: 0; transition: opacity 2s; }
-#login-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px; font-size: 18px; cursor: pointer; z-index: 20; }
-#add-btn { position: absolute; bottom: 10px; left: 10px; padding: 10px; font-size: 14px; cursor: pointer; z-index: 20; display: none; background: rgba(255,255,255,0.2); color: white; border: none; }
+#login-btn, #add-btn, #fullscreen-btn { position: absolute; padding: 20px; font-size: 18px; cursor: pointer; z-index: 20; background: rgba(255,255,255,0.2); color: white; border: none; }
+#login-btn { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+#add-btn { bottom: 10px; left: 10px; display: none; }
+#fullscreen-btn { bottom: 10px; right: 10px; }
