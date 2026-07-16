@@ -3,6 +3,6 @@ body, html { margin: 0; padding: 0; background: #000; overflow: hidden; height: 
 .bg-layer { position: absolute; top:0; left:0; width: 100vw; height: 100vh; filter: blur(25px); background-size: cover; background-position: center; opacity: 0.6; z-index: 0; transition: background-image 2s; }
 .main-img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; object-position: center; z-index: 1; opacity: 0; transition: opacity 2s; display: block; }
 #login-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px; font-size: 18px; cursor: pointer; z-index: 20; background: rgba(255,255,255,0.2); color: white; border: none; }
-#add-btn { position: absolute; bottom: 20px; left: 20px; padding: 15px; font-size: 16px; cursor: pointer; z-index: 20; background: rgba(0,0,0,0.5); color: white; border: 1px solid white; display: none; }
-#reset-btn { position: absolute; bottom: 20px; right: 20px; padding: 10px; font-size: 10px; cursor: pointer; z-index: 20; background: transparent; color: rgba(255,255,255,0.3); border: none; opacity: 0.1; }
-#reset-btn:hover, #reset-btn:active { opacity: 1; }
+#add-btn { position: absolute; bottom: 20px; left: 20px; padding: 8px 12px; font-size: 12px; cursor: pointer; z-index: 20; background: rgba(0,0,0,0.5); color: rgba(255,255,255,0.7); border: 1px solid rgba(255,255,255,0.3); display: none; }
+#reset-btn { position: absolute; bottom: 20px; right: 20px; padding: 5px 8px; font-size: 10px; cursor: pointer; z-index: 20; background: transparent; color: rgba(255,255,255,0.3); border: none; opacity: 0.3; }
+#reset-btn:hover { opacity: 1; }
