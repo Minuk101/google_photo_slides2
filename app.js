@@ -10,6 +10,16 @@ function shuffleArray(array) {
     }
 }
 
+function loadFromStorage() {
+    const saved = localStorage.getItem('my_photos');
+    if (saved) {
+        allPhotos = JSON.parse(saved);
+        console.log("저장된 사진 목록 로드 완료:", allPhotos.length);
+        if (allPhotos.length > 0) return true;
+    }
+    return false;
+}
+
 document.getElementById('login-btn').onclick = function() {
     const client = google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
@@ -17,7 +27,11 @@ document.getElementById('login-btn').onclick = function() {
         callback: async (res) => {
             if (res.access_token) {
                 globalToken = res.access_token;
-                createAndOpenSession(res.access_token);
+                if (loadFromStorage()) {
+                    startSlideshow(res.access_token);
+                } else {
+                    createAndOpenSession(res.access_token);
+                }
                 document.getElementById('login-btn').style.display = 'none';
             }
         }
@@ -51,6 +65,7 @@ async function pollPhotos(token, sessionId) {
         const data = await res.json();
         if (data.mediaItems?.length > 0) {
             allPhotos.push(...data.mediaItems);
+            localStorage.setItem('my_photos', JSON.stringify(allPhotos));
             shuffleArray(allPhotos);
             console.log("현재 누적 사진 수:", allPhotos.length);
             clearInterval(pollInterval);
@@ -65,6 +80,7 @@ async function pollPhotos(token, sessionId) {
 
 function startSlideshow(token) {
     document.getElementById('slideshow').style.display = 'block';
+    document.getElementById('add-btn').style.display = 'block';
     let idx = 0, showingImg1 = true;
     const img1 = document.getElementById('img1'), img2 = document.getElementById('img2'), bg = document.getElementById('bg-layer');
     
