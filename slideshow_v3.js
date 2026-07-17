@@ -126,7 +126,8 @@ function startSlideshow(token) {
     document.getElementById('slideshow').style.display = 'block';
     document.getElementById('add-btn').style.display = 'block';
     let idx = 0, showingImg1 = true;
-    const img1 = document.getElementById('img1'), img2 = document.getElementById('img2'), bg = document.getElementById('bg-layer');
+    const img1 = document.getElementById('img1'), img2 = document.getElementById('img2');
+    const bg1 = document.getElementById('bg1'), bg2 = document.getElementById('bg2');
     
     async function next() {
         if (allPhotos.length === 0) return;
@@ -137,16 +138,22 @@ function startSlideshow(token) {
             const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
             const objectUrl = URL.createObjectURL(await response.blob());
             
-            bg.src = objectUrl;
-            
             const nextImg = showingImg1 ? img2 : img1;
             const currentImg = showingImg1 ? img1 : img2;
+            const nextBg = showingImg1 ? bg2 : bg1;
+            const currentBg = showingImg1 ? bg1 : bg2;
             
             nextImg.src = objectUrl;
+            nextBg.src = objectUrl;
+            
             nextImg.style.opacity = 1;
+            nextBg.style.opacity = 0.6;
+            
             currentImg.style.opacity = 0;
+            currentBg.style.opacity = 0;
             
             if (currentImg.src.startsWith('blob:')) URL.revokeObjectURL(currentImg.src);
+            if (currentBg.src.startsWith('blob:')) URL.revokeObjectURL(currentBg.src);
             
             showingImg1 = !showingImg1;
             idx = (idx + 1) % allPhotos.length;
