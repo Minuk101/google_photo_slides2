@@ -150,11 +150,28 @@ function startSlideshow(token) {
             
             showingImg1 = !showingImg1;
             idx = (idx + 1) % allPhotos.length;
+            
+            // 프리패치 시도 (다음 5장)
+            prefetchNext(idx, 5);
+
+            setTimeout(next, 5000); // 5초 후 다음 장
         } catch (e) {
             console.error(e);
             idx = (idx + 1) % allPhotos.length;
-            next();
+            setTimeout(next, 1000); // 에러 시 짧게 대기 후 재시도
         }
     }
-    next(); setInterval(next, 5000);
+
+    async function prefetchNext(startIndex, count) {
+        for (let i = 0; i < count; i++) {
+            const nextIdx = (startIndex + i) % allPhotos.length;
+            const item = allPhotos[nextIdx];
+            const url = item.baseUrl + '=w1920-h1080';
+            // 이미 캐시된(blob) 데이터가 있는지 체크는 복잡하니, 
+            // 일단 fetch해서 브라우저 캐시라도 타게 함
+            fetch(url, { headers: { 'Authorization': 'Bearer ' + token } }).catch(() => {});
+        }
+    }
+
+    next();
 }
