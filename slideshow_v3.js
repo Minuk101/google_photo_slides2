@@ -102,7 +102,9 @@ async function pollPhotos(token, sessionId) {
 
         if (allItems.length > 0) {
             const newUrls = allItems.map(p => p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl);
-            allPhotos = newUrls.map(url => ({ baseUrl: url }));
+            // 기존 allPhotos를 덮어쓰지 말고 합치도록 수정
+            const uniqueUrls = new Set([...allPhotos.map(p => p.baseUrl), ...newUrls]);
+            allPhotos = Array.from(uniqueUrls).map(url => ({ baseUrl: url }));
             
             const urlsOnly = allPhotos.map(p => p.baseUrl);
             localStorage.setItem('my_photos', JSON.stringify(urlsOnly));
@@ -111,10 +113,11 @@ async function pollPhotos(token, sessionId) {
             console.log("현재 누적 사진 수:", allPhotos.length);
             clearInterval(pollInterval);
             
+            // slideshow가 이미 시작되었더라도 업데이트
             if(document.getElementById('slideshow').style.display === 'none') {
                 startSlideshow(token);
-                document.getElementById('add-btn').style.display = 'block';
             }
+            document.getElementById('add-btn').style.display = 'block';
         }
     }, 3000);
 }
