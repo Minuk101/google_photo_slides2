@@ -87,14 +87,22 @@ async function pollPhotos(token, sessionId) {
     if (pollInterval) clearInterval(pollInterval);
     
     pollInterval = setInterval(async () => {
-        const res = await fetch('https://photospicker.googleapis.com/v1/mediaItems?sessionId=' + sessionId, {
-            headers: { 'Authorization': 'Bearer ' + token }
-        });
-        if (res.status !== 200) return;
-        const data = await res.json();
-        if (data.mediaItems?.length > 0) {
-            const newUrls = data.mediaItems.map(p => p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl);
-            allPhotos.push(...newUrls.map(url => ({ baseUrl: url })));
+        let allItems = [];
+        let nextPageToken = null;
+        
+        // 페이지네이션 루프 추가
+        do {
+            const url = 'https://photospicker.googleapis.com/v1/mediaItems?sessionId=' + sessionId + (nextPageToken ? '&pageToken=' + nextPageToken : '');
+            const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+            if (res.status !== 200) break;
+            const data = await res.json();
+            if (data.mediaItems) allItems.push(...data.mediaItems);
+            nextPageToken = data.nextPageToken;
+        } while (nextPageToken);
+
+        if (allItems.length > 0) {
+            const newUrls = allItems.map(p => p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl);
+            allPhotos = newUrls.map(url => ({ baseUrl: url }));
             
             const urlsOnly = allPhotos.map(p => p.baseUrl);
             localStorage.setItem('my_photos', JSON.stringify(urlsOnly));
