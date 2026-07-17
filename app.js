@@ -60,11 +60,24 @@ document.getElementById('login-btn').onclick = function() {
 };
 
 async function addMorePhotos() {
-    if (!globalToken) return;
-    const session = await fetch('https://photospicker.googleapis.com/v1/sessions', {
+    if (!globalToken) {
+        document.getElementById('login-btn').style.display = 'block';
+        document.getElementById('login-btn').click();
+        return;
+    }
+    const response = await fetch('https://photospicker.googleapis.com/v1/sessions', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + globalToken }
-    }).then(r => r.json());
+    });
+
+    if (response.status === 401) {
+        localStorage.removeItem('auth_token');
+        document.getElementById('login-btn').style.display = 'block';
+        document.getElementById('login-btn').click();
+        return;
+    }
+
+    const session = await response.json();
     window.open(session.pickerUri, '_blank');
     pollPhotos(globalToken, session.id);
 }
