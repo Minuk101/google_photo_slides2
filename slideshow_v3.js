@@ -137,7 +137,7 @@ function startSlideshow(token) {
             const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
             const objectUrl = URL.createObjectURL(await response.blob());
             
-            bg.style.backgroundImage = 'url("' + objectUrl + '")';
+            bg.src = objectUrl;
             
             const nextImg = showingImg1 ? img2 : img1;
             const currentImg = showingImg1 ? img1 : img2;

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Google Photos Slideshow</title>
-    <link rel="stylesheet" href="style.css?v=3">
+    <link rel="stylesheet" href="style.css?v=4">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -11,10 +11,10 @@
     <button id="add-btn" style="display:none;" onclick="addMorePhotos()">사진 추가 선택하기</button>
     <button id="reset-btn" onclick="resetPhotos()">초기화</button>
     <div id="slideshow" style="display:none;">
-        <div id="bg-layer" class="bg-layer"></div>
+        <img id="bg-layer" class="bg-layer" src="">
         <img id="img1" class="main-img" style="opacity: 0; transition: opacity 2s;">
         <img id="img2" class="main-img" style="opacity: 0; transition: opacity 2s;">
     </div>
-    <script src="slideshow_v3.js?v=35"></script>
+    <script src="slideshow_v3.js?v=36"></script>
 </body>
 </html>
