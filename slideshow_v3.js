@@ -59,19 +59,11 @@ setInterval(() => {
     }
 }, 10000);
 
-function shuffleArray(array) {
-    for (let i = array.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [array[i], array[j]] = [array[j], array[i]];
-    }
-}
-
 async function loadFromStorage() {
     const urls = await dbGet('photos');
     const token = await dbGet('token');
     if (urls && token) {
         allPhotos = urls.map(url => ({ baseUrl: url }));
-        shuffleArray(allPhotos);
         globalToken = token;
         return true;
     }
@@ -125,7 +117,7 @@ async function addMorePhotos() {
     });
 
     if (response.status === 401) {
-        await dbPut('token', '');  // invalidate
+        await dbPut('token', '');
         document.getElementById('login-btn').style.display = 'block';
         document.getElementById('login-btn').click();
         return;
@@ -161,7 +153,6 @@ async function pollPhotos(token, sessionId) {
             const urlsOnly = allPhotos.map(p => p.baseUrl);
             await dbPut('photos', urlsOnly);
             
-            shuffleArray(allPhotos);
             console.log("Total photos:", allPhotos.length);
             clearInterval(pollInterval);
             
@@ -176,7 +167,7 @@ async function pollPhotos(token, sessionId) {
 function startSlideshow(token) {
     document.getElementById('slideshow').style.display = 'block';
     document.getElementById('add-btn').style.display = 'block';
-    let idx = 0, showingImg1 = true;
+    let idx = Math.floor(Math.random() * allPhotos.length), showingImg1 = true;
     const img1 = document.getElementById('img1'), img2 = document.getElementById('img2');
     const bg1 = document.getElementById('bg1'), bg2 = document.getElementById('bg2');
     
@@ -209,21 +200,20 @@ function startSlideshow(token) {
             currentImg.style.opacity = 0;
             currentBg.style.opacity = 0;
             
-            // Wait for CSS transition (2s) to finish before releasing old blobs
             setTimeout(() => {
                 if (currentImg.src.startsWith('blob:')) URL.revokeObjectURL(currentImg.src);
                 if (currentBg.src.startsWith('blob:')) URL.revokeObjectURL(currentBg.src);
             }, 2200);
             
             showingImg1 = !showingImg1;
-            idx = (idx + 1) % allPhotos.length;
+            idx = Math.floor(Math.random() * allPhotos.length);
             
             lastTransitionTime = Date.now();
 
             setTimeout(next, 5000);
         } catch (e) {
             console.error(e);
-            idx = (idx + 1) % allPhotos.length;
+            idx = Math.floor(Math.random() * allPhotos.length);
             if (objectUrl) URL.revokeObjectURL(objectUrl);
             setTimeout(next, 1000);
         }
@@ -231,4 +221,3 @@ function startSlideshow(token) {
 
     next();
 }
-
