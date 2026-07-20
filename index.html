@@ -5,6 +5,12 @@
     <title>Google Photos Slideshow</title>
     <link rel="stylesheet" href="style.css?v=7">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <link rel="manifest" href="manifest.json">
+    <script>
+        if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("sw.js");
+        }
+    </script>
 </head>
 <body>
     <button id="login-btn">로그인하고 슬라이드 시작</button>
@@ -18,11 +24,12 @@
     </div>
     <div id="heartbeat" style="position:fixed; bottom:0; right:0; font-size:8px; color:#333; z-index:999;">0</div>
     <script src="slideshow_v3.js?v=43"></script>
+    <script>
+        document.addEventListener("click", () => {
+            if (!document.fullscreenElement && document.getElementById("slideshow").style.display !== "none") {
+                document.documentElement.requestFullscreen().catch(() => {});
+            }
+        }, { once: true });
+    </script>
 </body>
 </html>
-
-
-
-
-
-
