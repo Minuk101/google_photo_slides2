@@ -71,6 +71,7 @@ async function loadFromStorage() {
     const token = await dbGet('token');
     if (urls && token) {
         allPhotos = urls.map(url => ({ baseUrl: url }));
+        shuffleArray(allPhotos);
         globalToken = token;
         return true;
     }
@@ -230,3 +231,4 @@ function startSlideshow(token) {
 
     next();
 }
+
