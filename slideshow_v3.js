@@ -141,12 +141,19 @@ function startSlideshow(token) {
     
     async function next() {
         if (allPhotos.length === 0) return;
+        
+        // 하트비트 업데이트
+        const hb = document.getElementById('heartbeat');
+        hb.innerText = parseInt(hb.innerText) + 1;
+
         const item = allPhotos[idx];
         const url = item.baseUrl + '=w1920-h1080';
+        let objectUrl = null;
         
         try {
             const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
-            const objectUrl = URL.createObjectURL(await response.blob());
+            const blob = await response.blob();
+            objectUrl = URL.createObjectURL(blob);
             
             const nextImg = showingImg1 ? img2 : img1;
             const currentImg = showingImg1 ? img1 : img2;
@@ -162,26 +169,22 @@ function startSlideshow(token) {
             currentImg.style.opacity = 0;
             currentBg.style.opacity = 0;
             
+            // 기존 객체 정리 (에러 시에도 정리할 수 있게 처리 필요)
             if (currentImg.src.startsWith('blob:')) URL.revokeObjectURL(currentImg.src);
             if (currentBg.src.startsWith('blob:')) URL.revokeObjectURL(currentBg.src);
             
             showingImg1 = !showingImg1;
             idx = (idx + 1) % allPhotos.length;
             
-            // 전환 시간 갱신
             lastTransitionTime = Date.now();
-            
-            // 프리패치 시도 (다음 5장)
             prefetchNext(idx, 5);
 
-            setTimeout(next, 5000); // 5초 후 다음 장
+            setTimeout(next, 5000); 
         } catch (e) {
             console.error(e);
             idx = (idx + 1) % allPhotos.length;
-            
-            // 에러 시에도 감시자가 새로고침할 수 있게 lastTransitionTime을 갱신하지 않음
-            // 하지만 너무 자주 재시도하는 것을 막기 위해 짧게 대기
-            setTimeout(next, 1000); 
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+            setTimeout(next, 1000);
         }
     }
 
