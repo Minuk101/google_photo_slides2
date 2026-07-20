@@ -4,7 +4,7 @@ let globalToken = null;
 let pollInterval = null;
 let lastTransitionTime = Date.now();
 
-// ---- IndexedDB helpers (unlimited storage, unlike localStorage 5MB limit) ----
+// ---- IndexedDB helpers ----
 const DB_NAME = 'photos_db';
 const DB_VERSION = 1;
 const STORE_NAME = 'store';
@@ -51,7 +51,7 @@ async function dbClear() {
 }
 // ---- End IndexedDB ----
 
-// Watchdog: auto-reload if slideshow stalls for >60s
+// Watchdog
 setInterval(() => {
     if (document.getElementById('slideshow').style.display !== 'none' && Date.now() - lastTransitionTime > 60000) {
         console.error("Slideshow stalled, reloading...");
@@ -146,7 +146,7 @@ async function pollPhotos(token, sessionId) {
         } while (nextPageToken);
 
         if (allItems.length > 0) {
-            const newUrls = allItems.map(p => p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl);
+            const newUrls = allItems.map(p => p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl).filter(url => url);
             const uniqueUrls = new Set([...allPhotos.map(p => p.baseUrl), ...newUrls]);
             allPhotos = Array.from(uniqueUrls).map(url => ({ baseUrl: url }));
             
@@ -154,6 +154,7 @@ async function pollPhotos(token, sessionId) {
             await dbPut('photos', urlsOnly);
             
             console.log("Total photos:", allPhotos.length);
+            document.getElementById('heartbeat').innerText = allPhotos.length;
             clearInterval(pollInterval);
             
             if (document.getElementById('slideshow').style.display === 'none') {
@@ -171,11 +172,13 @@ function startSlideshow(token) {
     const img1 = document.getElementById('img1'), img2 = document.getElementById('img2');
     const bg1 = document.getElementById('bg1'), bg2 = document.getElementById('bg2');
     
+    document.getElementById('heartbeat').innerText = allPhotos.length;
+    
     async function next() {
         if (allPhotos.length === 0) return;
         
         const hb = document.getElementById('heartbeat');
-        hb.innerText = parseInt(hb.innerText) + 1;
+        hb.innerText = allPhotos.length;
 
         const item = allPhotos[idx];
         const url = item.baseUrl + '=w1920-h1080';
