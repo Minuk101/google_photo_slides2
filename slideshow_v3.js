@@ -1,14 +1,60 @@
-const CLIENT_ID = '232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleusercontent.com';
+﻿const CLIENT_ID = '232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleusercontent.com';
 let allPhotos = [];
 let globalToken = null;
 let pollInterval = null;
 let lastTransitionTime = Date.now();
 
-// 1분 이상 슬라이드가 멈추면 새로고침하는 Watchdog
+// ---- IndexedDB helpers (unlimited storage, unlike localStorage 5MB limit) ----
+const DB_NAME = 'photos_db';
+const DB_VERSION = 1;
+const STORE_NAME = 'store';
+
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = (e) => {
+            e.target.result.createObjectStore(STORE_NAME, { keyPath: 'id' });
+        };
+        req.onsuccess = (e) => resolve(e.target.result);
+        req.onerror = (e) => reject(e.target.error);
+    });
+}
+
+async function dbPut(key, value) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).put({ id: key, value });
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e.target.error);
+    });
+}
+
+async function dbGet(key) {
+    const db = await openDB();
+    return new Promise((resolve) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const req = tx.objectStore(STORE_NAME).get(key);
+        req.onsuccess = () => resolve(req.result ? req.result.value : null);
+        req.onerror = () => resolve(null);
+    });
+}
+
+async function dbClear() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).clear();
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e.target.error);
+    });
+}
+// ---- End IndexedDB ----
+
+// Watchdog: auto-reload if slideshow stalls for >60s
 setInterval(() => {
-    // 슬라이드가 표시 중일 때만 검사 (로그인 버튼이 숨겨져 있을 때)
     if (document.getElementById('slideshow').style.display !== 'none' && Date.now() - lastTransitionTime > 60000) {
-        console.error("슬라이드 멈춤 감지, 새로고침 시도");
+        console.error("Slideshow stalled, reloading...");
         location.reload();
     }
 }, 10000);
@@ -20,28 +66,25 @@ function shuffleArray(array) {
     }
 }
 
-function loadFromStorage() {
-    const saved = localStorage.getItem('my_photos');
-    const savedToken = localStorage.getItem('auth_token');
-    if (saved && savedToken) {
-        const urls = JSON.parse(saved);
+async function loadFromStorage() {
+    const urls = await dbGet('photos');
+    const token = await dbGet('token');
+    if (urls && token) {
         allPhotos = urls.map(url => ({ baseUrl: url }));
-        globalToken = savedToken;
+        globalToken = token;
         return true;
     }
     return false;
 }
 
 function resetPhotos() {
-    if(confirm("모든 사진 목록을 초기화할까요?")) {
-        localStorage.removeItem('my_photos');
-        localStorage.removeItem('auth_token');
-        location.reload();
+    if (confirm("Reset all photo list?")) {
+        dbClear().then(() => location.reload());
     }
 }
 
-window.onload = () => {
-    if (loadFromStorage()) {
+window.onload = async () => {
+    if (await loadFromStorage()) {
         document.getElementById('login-btn').style.display = 'none';
         startSlideshow(globalToken);
         document.getElementById('add-btn').style.display = 'block';
@@ -55,7 +98,7 @@ document.getElementById('login-btn').onclick = function() {
         callback: async (res) => {
             if (res.access_token) {
                 globalToken = res.access_token;
-                localStorage.setItem('auth_token', res.access_token);
+                await dbPut('token', res.access_token);
                 const session = await fetch('https://photospicker.googleapis.com/v1/sessions', {
                     method: 'POST',
                     headers: { 'Authorization': 'Bearer ' + res.access_token }
@@ -81,7 +124,7 @@ async function addMorePhotos() {
     });
 
     if (response.status === 401) {
-        localStorage.removeItem('auth_token');
+        await dbPut('token', '');  // invalidate
         document.getElementById('login-btn').style.display = 'block';
         document.getElementById('login-btn').click();
         return;
@@ -93,14 +136,13 @@ async function addMorePhotos() {
 }
 
 async function pollPhotos(token, sessionId) {
-    console.log("사진 선택 대기 중...");
+    console.log("Waiting for photo selection...");
     if (pollInterval) clearInterval(pollInterval);
     
     pollInterval = setInterval(async () => {
         let allItems = [];
         let nextPageToken = null;
         
-        // 페이지네이션 루프 추가
         do {
             const url = 'https://photospicker.googleapis.com/v1/mediaItems?sessionId=' + sessionId + (nextPageToken ? '&pageToken=' + nextPageToken : '');
             const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
@@ -112,19 +154,17 @@ async function pollPhotos(token, sessionId) {
 
         if (allItems.length > 0) {
             const newUrls = allItems.map(p => p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl);
-            // 기존 allPhotos를 덮어쓰지 말고 합치도록 수정
             const uniqueUrls = new Set([...allPhotos.map(p => p.baseUrl), ...newUrls]);
             allPhotos = Array.from(uniqueUrls).map(url => ({ baseUrl: url }));
             
             const urlsOnly = allPhotos.map(p => p.baseUrl);
-            localStorage.setItem('my_photos', JSON.stringify(urlsOnly));
+            await dbPut('photos', urlsOnly);
             
             shuffleArray(allPhotos);
-            console.log("현재 누적 사진 수:", allPhotos.length);
+            console.log("Total photos:", allPhotos.length);
             clearInterval(pollInterval);
             
-            // slideshow가 이미 시작되었더라도 업데이트
-            if(document.getElementById('slideshow').style.display === 'none') {
+            if (document.getElementById('slideshow').style.display === 'none') {
                 startSlideshow(token);
             }
             document.getElementById('add-btn').style.display = 'block';
@@ -142,7 +182,6 @@ function startSlideshow(token) {
     async function next() {
         if (allPhotos.length === 0) return;
         
-        // 하트비트 업데이트
         const hb = document.getElementById('heartbeat');
         hb.innerText = parseInt(hb.innerText) + 1;
 
@@ -169,33 +208,23 @@ function startSlideshow(token) {
             currentImg.style.opacity = 0;
             currentBg.style.opacity = 0;
             
-            // 기존 객체 정리 (에러 시에도 정리할 수 있게 처리 필요)
-            if (currentImg.src.startsWith('blob:')) URL.revokeObjectURL(currentImg.src);
-            if (currentBg.src.startsWith('blob:')) URL.revokeObjectURL(currentBg.src);
+            // Wait for CSS transition (2s) to finish before releasing old blobs
+            setTimeout(() => {
+                if (currentImg.src.startsWith('blob:')) URL.revokeObjectURL(currentImg.src);
+                if (currentBg.src.startsWith('blob:')) URL.revokeObjectURL(currentBg.src);
+            }, 2200);
             
             showingImg1 = !showingImg1;
             idx = (idx + 1) % allPhotos.length;
             
             lastTransitionTime = Date.now();
-            prefetchNext(idx, 5);
 
-            setTimeout(next, 5000); 
+            setTimeout(next, 5000);
         } catch (e) {
             console.error(e);
             idx = (idx + 1) % allPhotos.length;
             if (objectUrl) URL.revokeObjectURL(objectUrl);
             setTimeout(next, 1000);
-        }
-    }
-
-    async function prefetchNext(startIndex, count) {
-        for (let i = 0; i < count; i++) {
-            const nextIdx = (startIndex + i) % allPhotos.length;
-            const item = allPhotos[nextIdx];
-            const url = item.baseUrl + '=w1920-h1080';
-            // 이미 캐시된(blob) 데이터가 있는지 체크는 복잡하니, 
-            // 일단 fetch해서 브라우저 캐시라도 타게 함
-            fetch(url, { headers: { 'Authorization': 'Bearer ' + token } }).catch(() => {});
         }
     }
 
