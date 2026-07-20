@@ -29,7 +29,8 @@
             if (!document.fullscreenElement && document.getElementById("slideshow").style.display !== "none") {
                 document.documentElement.requestFullscreen().catch(() => {});
             }
-        }, { once: true });
+        });
     </script>
 </body>
 </html>
+
