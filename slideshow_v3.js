@@ -6,7 +6,8 @@ let lastTransitionTime = Date.now();
 
 // 1분 이상 슬라이드가 멈추면 새로고침하는 Watchdog
 setInterval(() => {
-    if (Date.now() - lastTransitionTime > 60000) {
+    // 슬라이드가 표시 중일 때만 검사 (로그인 버튼이 숨겨져 있을 때)
+    if (document.getElementById('slideshow').style.display !== 'none' && Date.now() - lastTransitionTime > 60000) {
         console.error("슬라이드 멈춤 감지, 새로고침 시도");
         location.reload();
     }
