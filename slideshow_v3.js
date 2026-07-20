@@ -2,6 +2,15 @@ const CLIENT_ID = '232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleuser
 let allPhotos = [];
 let globalToken = null;
 let pollInterval = null;
+let lastTransitionTime = Date.now();
+
+// 1분 이상 슬라이드가 멈추면 새로고침하는 Watchdog
+setInterval(() => {
+    if (Date.now() - lastTransitionTime > 60000) {
+        console.error("슬라이드 멈춤 감지, 새로고침 시도");
+        location.reload();
+    }
+}, 10000);
 
 function shuffleArray(array) {
     for (let i = array.length - 1; i > 0; i--) {
@@ -158,6 +167,9 @@ function startSlideshow(token) {
             showingImg1 = !showingImg1;
             idx = (idx + 1) % allPhotos.length;
             
+            // 전환 시간 갱신
+            lastTransitionTime = Date.now();
+            
             // 프리패치 시도 (다음 5장)
             prefetchNext(idx, 5);
 
@@ -165,7 +177,10 @@ function startSlideshow(token) {
         } catch (e) {
             console.error(e);
             idx = (idx + 1) % allPhotos.length;
-            setTimeout(next, 1000); // 에러 시 짧게 대기 후 재시도
+            
+            // 에러 시에도 감시자가 새로고침할 수 있게 lastTransitionTime을 갱신하지 않음
+            // 하지만 너무 자주 재시도하는 것을 막기 위해 짧게 대기
+            setTimeout(next, 1000); 
         }
     }
 
