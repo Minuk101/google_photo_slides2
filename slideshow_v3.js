@@ -80,7 +80,7 @@ function resetPhotos() {
 window.onload = async () => {
     if (await loadFromStorage()) {
         document.getElementById('login-btn').style.display = 'none';
-        startSlideshow();
+        
         document.getElementById('add-btn').style.display = 'block';
     }
 };
@@ -114,7 +114,7 @@ async function addMorePhotos() {
     }
     const response = await fetch('https://photospicker.googleapis.com/v1/sessions', {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + globalToken }
+        headers: { 'Authorization': 'Bearer ' + token }
     });
 
     if (response.status === 401) {
@@ -168,7 +168,7 @@ async function processQueue() {
             document.getElementById('heartbeat').innerText = allPhotos.length;
             
             if (document.getElementById('slideshow').style.display === 'none') {
-                startSlideshow();
+                
             }
             document.getElementById('add-btn').style.display = 'block';
             break;
@@ -182,7 +182,7 @@ async function processQueue() {
     processQueue();
 }
 
-function startSlideshow() {
+function startSlideshow(token) {
     document.getElementById('slideshow').style.display = 'block';
     document.getElementById('add-btn').style.display = 'block';
     let idx = Math.floor(Math.random() * allPhotos.length), showingImg1 = true;
@@ -202,7 +202,7 @@ function startSlideshow() {
         let objectUrl = null;
         
         try {
-            const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + globalToken } });
+            const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
             const blob = await response.blob();
             objectUrl = URL.createObjectURL(blob);
             
@@ -241,3 +241,4 @@ function startSlideshow() {
 
     next();
 }
+
