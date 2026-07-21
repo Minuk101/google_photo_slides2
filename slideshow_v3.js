@@ -83,6 +83,8 @@ window.onload = async () => {
         document.getElementById('login-btn').style.display = 'none';
         startSlideshow(globalToken);
         document.getElementById('add-btn').style.display = 'block';
+    document.getElementById('speed-down').style.display = 'block';
+    document.getElementById('speed-up').style.display = 'block';
     }
 };
 
@@ -175,7 +177,6 @@ async function processQueue() {
         startSlideshow(token);
     }
     document.getElementById('add-btn').style.display = 'block';
-
     pollQueue.shift();
     pollInProgress = false;
     processQueue();
@@ -228,10 +229,10 @@ document.getElementById('speed-down').onclick = () => changeSpeed(-1000);
 document.getElementById('speed-up').onclick = () => changeSpeed(1000);
 
 function startSlideshow(token) {
-    document.getElementById('slideshow').style.display = 'block';
-    document.getElementById('add-btn').style.display = 'block';
     document.getElementById('speed-down').style.display = 'block';
     document.getElementById('speed-up').style.display = 'block';
+    document.getElementById('slideshow').style.display = 'block';
+    document.getElementById('add-btn').style.display = 'block';
     let idx = Math.floor(Math.random() * allPhotos.length), showingImg1 = true;
     const img1 = document.getElementById('img1'), img2 = document.getElementById('img2');
     const bg1 = document.getElementById('bg1'), bg2 = document.getElementById('bg2');
@@ -278,7 +279,7 @@ function startSlideshow(token) {
             const origins = ['0% 0%', '100% 0%', '0% 100%', '100% 100%', '50% 50%'];
             const origin = origins[Math.floor(Math.random() * origins.length)];
             nextImg.style.transformOrigin = origin;
-            nextImg.style.transform = 'scale(1.15)';
+            nextImg.style.transform = 'scale(1.05)';
             nextImg.style.transition = 'transform ' + (slideInterval / 1000) + 's ease-out, opacity 2s';
             nextImg.style.opacity = 1;
             nextBg.style.opacity = 1;
@@ -310,4 +311,5 @@ function startSlideshow(token) {
 
     next();
 }
+
 
