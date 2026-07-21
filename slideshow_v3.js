@@ -80,7 +80,7 @@ function resetPhotos() {
 window.onload = async () => {
     if (await loadFromStorage()) {
         document.getElementById('login-btn').style.display = 'none';
-        startSlideshow(globalToken);
+        startSlideshow();
         document.getElementById('add-btn').style.display = 'block';
     }
 };
@@ -168,7 +168,7 @@ async function processQueue() {
             document.getElementById('heartbeat').innerText = allPhotos.length;
             
             if (document.getElementById('slideshow').style.display === 'none') {
-                startSlideshow(token);
+                startSlideshow();
             }
             document.getElementById('add-btn').style.display = 'block';
             break;
@@ -182,7 +182,7 @@ async function processQueue() {
     processQueue();
 }
 
-function startSlideshow(token) {
+function startSlideshow() {
     document.getElementById('slideshow').style.display = 'block';
     document.getElementById('add-btn').style.display = 'block';
     let idx = Math.floor(Math.random() * allPhotos.length), showingImg1 = true;
@@ -202,7 +202,7 @@ function startSlideshow(token) {
         let objectUrl = null;
         
         try {
-            const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+            const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + globalToken } });
             const blob = await response.blob();
             objectUrl = URL.createObjectURL(blob);
             
@@ -241,6 +241,3 @@ function startSlideshow(token) {
 
     next();
 }
-
-
-
