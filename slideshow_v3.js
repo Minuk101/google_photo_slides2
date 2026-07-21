@@ -289,6 +289,7 @@ function startSlideshow(token) {
         } catch (e) {
             console.error('Slide error:', e.message || e);
             if (objectUrl) URL.revokeObjectURL(objectUrl);
+            setTimeout(next, 5000);
         }
         
        
