@@ -1,4 +1,4 @@
-癤풻onst CLIENT_ID = '232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleusercontent.com';
+const CLIENT_ID = '232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleusercontent.com';
 let allPhotos = [];
 let globalToken = null;
 let lastTransitionTime = Date.now();
@@ -189,19 +189,37 @@ async function processQueue() {
     if (pollQueue.length > 0) processQueue();
 }
 
-// ---- Slideshow queue: keep 10 photos in random order ----
+// ---- Slideshow queue: keep 10 photos in random order with prefetch ----
 const slideQueue = [];
 
-function refillQueue() {
+async function refillQueue() {
     const usedUrls = new Set(slideQueue.map(p => p.baseUrl));
+    
+    // 큐를 10개로 채우면서 prefetch
     while (slideQueue.length < 10 && allPhotos.length > 0) {
         let found = false;
         for (let tries = 0; tries < 30; tries++) {
             const pick = allPhotos[Math.floor(Math.random() * allPhotos.length)];
             if (!usedUrls.has(pick.baseUrl)) {
-                slideQueue.push(pick);
-                usedUrls.add(pick.baseUrl);
-                found = true;
+                // blob 미리 받아오기
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 3000);
+                    const resp = await fetch(pick.baseUrl + '=w1920-h1080', { 
+                        headers: { 'Authorization': 'Bearer ' + token },
+                        signal: controller.signal 
+                    });
+                    clearTimeout(timeoutId);
+                    
+                    if (resp.ok) {
+                        const blob = await resp.blob();
+                        slideQueue.push({ ...pick, blob });
+                        usedUrls.add(pick.baseUrl);
+                        found = true;
+                    }
+                } catch (e) {
+                    // prefetch 실패하면 큐에 넣지 않음
+                }
                 break;
             }
         }
@@ -221,26 +239,28 @@ function startSlideshow(token) {
     async function next() {
         if (allPhotos.length === 0) return;
 
-        refillQueue();
+        await refillQueue();
 
         const item = slideQueue.length > 0 ? slideQueue.shift() : allPhotos[Math.floor(Math.random() * allPhotos.length)];
-        const url = item.baseUrl + '=w1920-h1080';
         let objectUrl = null;
 
         try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 3000);
-            let resp;
-            try {
-                resp = await fetch(url, { 
-                    headers: { 'Authorization': 'Bearer ' + token },
-                    signal: controller.signal 
-                });
-            } finally {
-                clearTimeout(timeoutId);
-            }
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            const blob = await resp.blob();
+            // prefetch된 blob이 있으면 사용, 없으면 fallback
+            const blob = item.blob || await (async () => {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3000);
+                try {
+                    const resp = await fetch(item.baseUrl + '=w1920-h1080', { 
+                        headers: { 'Authorization': 'Bearer ' + token },
+                        signal: controller.signal 
+                    });
+                    clearTimeout(timeoutId);
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    return await resp.blob();
+                } finally {
+                    clearTimeout(timeoutId);
+                }
+            })();
             objectUrl = URL.createObjectURL(blob);
 
             const nextImg = showingImg1 ? img2 : img1;
@@ -268,6 +288,8 @@ function startSlideshow(token) {
 
             currentImg.style.opacity = 0;
             currentBg.style.opacity = 0;
+
+            setTimeout(next, 5000);
 
             setTimeout(() => {
                 if (currentImg.src.startsWith('blob:')) URL.revokeObjectURL(currentImg.src);
