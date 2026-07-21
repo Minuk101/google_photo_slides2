@@ -229,11 +229,16 @@ function startSlideshow(token) {
     document.getElementById('heartbeat').innerText = allPhotos.length;
     ensurePrefetch(token);
 
+    let slideTimer = null;
+
     async function next() {
         if (allPhotos.length === 0) return;
 
         const hb = document.getElementById('heartbeat');
         hb.innerText = allPhotos.length;
+
+        // Schedule next slide exactly 5s from now (guaranteed)
+        slideTimer = setTimeout(next, 5000);
 
         const item = allPhotos[idx];
         let objectUrl = null;
@@ -248,8 +253,7 @@ function startSlideshow(token) {
                 blob = await resp.blob();
             } catch (e) {
                 idx = Math.floor(Math.random() * allPhotos.length);
-                setTimeout(next, 500);
-                return;
+                return; // next slide will pick another photo
             }
         }
 
@@ -261,7 +265,7 @@ function startSlideshow(token) {
             const nextBg = showingImg1 ? bg2 : bg1;
             const currentBg = showingImg1 ? bg1 : bg2;
 
-            // Reset transform before setting new image so Ken Burns always fires
+            // Reset transform so Ken Burns always fires
             const origins = ['0% 0%', '100% 0%', '0% 100%', '100% 100%', '50% 50%'];
             const origin = origins[Math.floor(Math.random() * origins.length)];
             nextImg.style.transition = 'none';
@@ -294,12 +298,10 @@ function startSlideshow(token) {
             lastTransitionTime = Date.now();
 
             ensurePrefetch(token);
-            setTimeout(next, 5000);
         } catch (e) {
             console.error(e);
             idx = Math.floor(Math.random() * allPhotos.length);
             if (objectUrl) URL.revokeObjectURL(objectUrl);
-            setTimeout(next, 1000);
         }
     }
 
