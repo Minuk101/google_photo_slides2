@@ -63,8 +63,9 @@ async function loadFromStorage() {
     const saved = await dbGet('photos');
     const token = await dbGet('token');
     if (saved && token) {
+        // Handle old format (string[]) — upgrade to object format
         if (typeof saved[0] === 'string') {
-            allPhotos = saved.map(url => ({ baseUrl: url }));
+            allPhotos = saved.map(url => ({ id: null, baseUrl: url }));
         } else {
             allPhotos = saved;
         }
@@ -150,25 +151,28 @@ async function pollPhotos(token, sessionId) {
         } while (nextPageToken);
 
         if (allItems.length > 0) {
-            console.log("Sample raw item:", JSON.stringify(allItems[0]));
-            
+            // Picker API's mediaItem.id is the stable Google Photos item ID
             const newItems = allItems.map(p => ({
+                id: p.id,
                 baseUrl: p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl,
                 filename: p.mediaFile ? p.mediaFile.filename : null
             })).filter(p => p.baseUrl);
             
-            // Deduplicate: first by URL, then by filename
-            const existingUrls = new Set(allPhotos.map(p => p.baseUrl));
+            // Dedup by stable Google Photos ID (or fallback to URL for old items)
+            const existingIds = new Set(allPhotos.filter(p => p.id).map(p => p.id));
+            const existingUrls = new Set(allPhotos.filter(p => !p.id).map(p => p.baseUrl));
+            
             for (const item of newItems) {
-                if (!existingUrls.has(item.baseUrl)) {
-                    allPhotos.push(item);
-                    existingUrls.add(item.baseUrl);
-                }
+                if (item.id && existingIds.has(item.id)) continue;
+                if (!item.id && existingUrls.has(item.baseUrl)) continue;
+                allPhotos.push(item);
+                if (item.id) existingIds.add(item.id);
+                else existingUrls.add(item.baseUrl);
             }
             
             await dbPut('photos', allPhotos);
             
-            console.log("Total photos:", allPhotos.length);
+            console.log("Total photos (deduped):", allPhotos.length);
             document.getElementById('heartbeat').innerText = allPhotos.length;
             clearInterval(pollInterval);
             
