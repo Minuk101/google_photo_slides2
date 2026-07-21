@@ -180,40 +180,51 @@ async function processQueue() {
     processQueue();
 }
 
-// ---- Prefetch cache ----
-const prefetchCache = new Map();
-let prefetchQueue = [];
+// ---- Prefetch queue: 10 pre-loaded photos, shown in order ----
+const prefetchQueue = [];
+const prefetchBlobs = new Map();
+let prefetchToken = null;
+let prefetchWorking = false;
 
-async function ensurePrefetch(token) {
-    const NEED = 10;
-    while (prefetchQueue.length < NEED && allPhotos.length > 0) {
-        const idx = Math.floor(Math.random() * allPhotos.length);
-        const item = allPhotos[idx];
-        if (!prefetchCache.has(item.baseUrl)) {
-            prefetchQueue.push(item.baseUrl);
+async function refillQueue(token) {
+    prefetchToken = token;
+    if (prefetchWorking) return;
+    prefetchWorking = true;
+    
+    // Pick random photos not already in the queue
+    const usedUrls = new Set(prefetchQueue.map(p => p.baseUrl));
+    outer:
+    while (prefetchQueue.length < 10 && allPhotos.length > 0) {
+        for (let tries = 0; tries < 30; tries++) {
+            const pick = allPhotos[Math.floor(Math.random() * allPhotos.length)];
+            if (!usedUrls.has(pick.baseUrl)) {
+                prefetchQueue.push(pick);
+                usedUrls.add(pick.baseUrl);
+                continue outer;
+            }
         }
+        break; // couldn't find any unused after 30 tries
     }
-
-    Promise.all(prefetchQueue.map(async (baseUrl) => {
-        if (prefetchCache.has(baseUrl)) return;
+    
+    // Fetch one unloaded item
+    for (const item of prefetchQueue) {
+        if (prefetchBlobs.has(item.baseUrl)) continue;
         try {
-            const resp = await fetch(baseUrl + '=w1920-h1080', {
+            const resp = await fetch(item.baseUrl + '=w1920-h1080', {
                 headers: { 'Authorization': 'Bearer ' + token }
             });
-            if (!resp.ok) return;
+            if (!resp.ok) throw new Error();
             const blob = await resp.blob();
-            prefetchCache.set(baseUrl, blob);
-        } catch (e) {}
-    }));
-}
-
-function getPrefetched(baseUrl) {
-    const blob = prefetchCache.get(baseUrl);
-    if (blob) {
-        prefetchCache.delete(baseUrl);
-        prefetchQueue = prefetchQueue.filter(u => u !== baseUrl);
+            prefetchBlobs.set(item.baseUrl, blob);
+            break;
+        } catch (e) {
+            const idx = prefetchQueue.indexOf(item);
+            if (idx >= 0) prefetchQueue.splice(idx, 1);
+        }
     }
-    return blob;
+    prefetchWorking = false;
+    
+    if (prefetchQueue.length < 10) refillQueue(token);
 }
 // ---- End prefetch ----
 
@@ -222,13 +233,13 @@ function getPrefetched(baseUrl) {
 function startSlideshow(token) {
     document.getElementById('slideshow').style.display = 'block';
     document.getElementById('add-btn').style.display = 'block';
-    let idx = Math.floor(Math.random() * allPhotos.length), showingImg1 = true;
+    let showingImg1 = true;
     const img1 = document.getElementById('img1'), img2 = document.getElementById('img2');
     const bg1 = document.getElementById('bg1'), bg2 = document.getElementById('bg2');
 
     document.getElementById('heartbeat').innerText = allPhotos.length;
-    ensurePrefetch(token);
-            prepareNext();
+    refillQueue(token);
+
 
     let nextBlob = null;  // pre-loaded blob for the next slide
     let nextItem = null;
@@ -321,8 +332,8 @@ function startSlideshow(token) {
 
             // Prepare the next slide's blob in background while current slide is showing
             ensurePrefetch(token);
-            prepareNext();
-            prepareNext();
+
+
             setTimeout(next, 5000);
         } catch (e) {
             console.error(e);
