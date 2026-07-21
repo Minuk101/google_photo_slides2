@@ -229,7 +229,17 @@ function startSlideshow(token) {
         let objectUrl = null;
 
         try {
-            const resp = await fetch(url);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 3000);
+            let resp;
+            try {
+                resp = await fetch(url, { 
+                    headers: { 'Authorization': 'Bearer ' + token },
+                    signal: controller.signal 
+                });
+            } finally {
+                clearTimeout(timeoutId);
+            }
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const blob = await resp.blob();
             objectUrl = URL.createObjectURL(blob);
@@ -275,4 +285,6 @@ function startSlideshow(token) {
 
     next();
 }
+
+
 
