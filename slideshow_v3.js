@@ -214,9 +214,7 @@ async function refillQueue(token) {
     for (const item of prefetchQueue) {
         if (prefetchBlobs.has(item.baseUrl)) continue;
         try {
-            const resp = await fetch(item.baseUrl + '=w1920-h1080', {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
+            const resp = await fetch(item.baseUrl + '=w1920-h1080');
             if (!resp.ok) throw new Error();
             const blob = await resp.blob();
             prefetchBlobs.set(item.baseUrl, blob);
@@ -283,9 +281,7 @@ function startSlideshow(token) {
         if (!blob || !item) {
             item = allPhotos[Math.floor(Math.random() * allPhotos.length)];
             try {
-                const resp = await fetch(item.baseUrl + '=w1920-h1080', {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
+                const resp = await fetch(item.baseUrl + '=w1920-h1080');
                 if (!resp.ok) throw new Error();
                 blob = await resp.blob();
             } catch (e) {
