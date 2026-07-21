@@ -14,7 +14,7 @@ const IMAGE_FETCH_TIMEOUT_MS = 20000;
 const API_FETCH_TIMEOUT_MS = 15000;
 const QUEUE_SIZE = 12;
 const PREFETCH_AHEAD = 4;
-const BULK_PREFETCH_CONCURRENCY = 2;
+const BULK_PREFETCH_CONCURRENCY = 4;
 const MAX_MEMORY_BLOBS = 5;
 const DEFAULT_POLL_INTERVAL_MS = 3000;
 const DEFAULT_SESSION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -47,6 +47,7 @@ let bulkPrefetchRetryTimer = null;
 let cacheNeedsAuthorization = false;
 
 let lastTransitionTime = Date.now();
+let databasePromise = null;
 
 function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -75,7 +76,9 @@ function normalizePhoto(item) {
 
 // ---- IndexedDB ----
 function openDB() {
-    return new Promise((resolve, reject) => {
+    if (databasePromise) return databasePromise;
+
+    databasePromise = new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
 
         request.onupgradeneeded = event => {
@@ -88,9 +91,24 @@ function openDB() {
             }
         };
 
-        request.onsuccess = event => resolve(event.target.result);
-        request.onerror = () => reject(request.error);
+        request.onsuccess = event => {
+            const db = event.target.result;
+            db.onversionchange = () => {
+                db.close();
+                databasePromise = null;
+            };
+            db.onclose = () => {
+                databasePromise = null;
+            };
+            resolve(db);
+        };
+        request.onerror = () => {
+            databasePromise = null;
+            reject(request.error);
+        };
     });
+
+    return databasePromise;
 }
 
 async function dbPut(key, value) {
@@ -98,13 +116,9 @@ async function dbPut(key, value) {
     return new Promise((resolve, reject) => {
         const tx = db.transaction(META_STORE, 'readwrite');
         tx.objectStore(META_STORE).put({ id: key, value });
-        tx.oncomplete = () => {
-            db.close();
-            resolve();
-        };
+        tx.oncomplete = () => resolve();
         tx.onerror = () => {
             const error = tx.error;
-            db.close();
             reject(error);
         };
     });
@@ -120,14 +134,8 @@ async function dbGet(key) {
         request.onsuccess = () => {
             value = request.result ? request.result.value : null;
         };
-        tx.oncomplete = () => {
-            db.close();
-            resolve(value);
-        };
-        tx.onerror = () => {
-            db.close();
-            reject(tx.error);
-        };
+        tx.oncomplete = () => resolve(value);
+        tx.onerror = () => reject(tx.error);
     });
 }
 
@@ -136,13 +144,9 @@ async function dbPutMedia(id, blob) {
     return new Promise((resolve, reject) => {
         const tx = db.transaction(MEDIA_STORE, 'readwrite');
         tx.objectStore(MEDIA_STORE).put({ id, blob });
-        tx.oncomplete = () => {
-            db.close();
-            resolve();
-        };
+        tx.oncomplete = () => resolve();
         tx.onerror = () => {
             const error = tx.error;
-            db.close();
             reject(error);
         };
     });
@@ -158,14 +162,8 @@ async function dbGetMedia(id) {
         request.onsuccess = () => {
             blob = request.result ? request.result.blob : null;
         };
-        tx.oncomplete = () => {
-            db.close();
-            resolve(blob);
-        };
-        tx.onerror = () => {
-            db.close();
-            reject(tx.error);
-        };
+        tx.oncomplete = () => resolve(blob);
+        tx.onerror = () => reject(tx.error);
     });
 }
 
@@ -175,13 +173,9 @@ async function dbClearAll() {
         const tx = db.transaction([META_STORE, MEDIA_STORE], 'readwrite');
         tx.objectStore(META_STORE).clear();
         tx.objectStore(MEDIA_STORE).clear();
-        tx.oncomplete = () => {
-            db.close();
-            resolve();
-        };
+        tx.oncomplete = () => resolve();
         tx.onerror = () => {
             const error = tx.error;
-            db.close();
             reject(error);
         };
     });
