@@ -181,7 +181,7 @@ async function processQueue() {
     document.getElementById('add-btn').style.display = 'block';
     pollQueue.shift();
     pollInProgress = false;
-    processQueue();
+    if (pollQueue.length > 0) processQueue();
 }
 
 // ---- Prefetch queue: 10 pre-loaded photos, shown in order ----
