@@ -221,7 +221,6 @@ function startSlideshow(token) {
     async function next() {
         if (allPhotos.length === 0) return;
 
-        setTimeout(next, 5000);
         refillQueue();
 
         const item = slideQueue.length > 0 ? slideQueue.shift() : allPhotos[Math.floor(Math.random() * allPhotos.length)];
@@ -281,10 +280,13 @@ function startSlideshow(token) {
             console.error('Slide error:', e.message || e);
             if (objectUrl) URL.revokeObjectURL(objectUrl);
         }
+        
+        setTimeout(next, 5000);
     }
 
     next();
 }
+
 
 
 
