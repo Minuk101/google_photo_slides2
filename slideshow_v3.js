@@ -4,6 +4,7 @@ let globalToken = null;
 let lastTransitionTime = Date.now();
 let pollQueue = [];
 let pollInProgress = false;
+let slideInterval = 5000;
 
 // ---- IndexedDB helpers ----
 const DB_NAME = 'photos_db';
@@ -55,7 +56,7 @@ async function dbClear() {
 // Watchdog
 setInterval(() => {
     if (document.getElementById('slideshow').style.display !== 'none' && Date.now() - lastTransitionTime > 60000) {
-        console.error("Slideshow stalled, reloading...");
+        console.error('Slideshow stalled, reloading...');
         location.reload();
     }
 }, 10000);
@@ -138,13 +139,13 @@ function queuePhotos(token, sessionId) {
 async function processQueue() {
     if (pollInProgress) return;
     if (pollQueue.length === 0) return;
-    
+
     pollInProgress = true;
     const { token, sessionId } = pollQueue[0];
-    
+
     let allItems = [];
     let nextPageToken = null;
-    
+
     do {
         const url = 'https://photospicker.googleapis.com/v1/mediaItems?sessionId=' + sessionId + (nextPageToken ? '&pageToken=' + nextPageToken : '');
         const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
@@ -159,33 +160,32 @@ async function processQueue() {
         setTimeout(() => { pollInProgress = false; processQueue(); }, 3000);
         return;
     }
-    
+
     const newItems = allItems.map(p => ({
         baseUrl: p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl
     })).filter(p => p.baseUrl);
-    
+
     allPhotos.push(...newItems);
     await dbPut('photos', allPhotos);
-    
+
     console.log('Added', newItems.length, 'photos. Total:', allPhotos.length);
     document.getElementById('heartbeat').innerText = allPhotos.length;
-    
+
     if (document.getElementById('slideshow').style.display === 'none') {
         startSlideshow(token);
     }
     document.getElementById('add-btn').style.display = 'block';
-    
+
     pollQueue.shift();
     pollInProgress = false;
     processQueue();
 }
 
-// ---- Prefetch cache: keeps up to 10 fresh blobs ready ----
+// ---- Prefetch cache ----
 const prefetchCache = new Map();
 let prefetchQueue = [];
 
 async function ensurePrefetch(token) {
-    // Need at least as many prefetched as we have photos
     const NEED = 10;
     while (prefetchQueue.length < NEED && allPhotos.length > 0) {
         const idx = Math.floor(Math.random() * allPhotos.length);
@@ -194,8 +194,7 @@ async function ensurePrefetch(token) {
             prefetchQueue.push(item.baseUrl);
         }
     }
-    
-    // Prefetch in background
+
     Promise.all(prefetchQueue.map(async (baseUrl) => {
         if (prefetchCache.has(baseUrl)) return;
         try {
@@ -205,9 +204,7 @@ async function ensurePrefetch(token) {
             if (!resp.ok) return;
             const blob = await resp.blob();
             prefetchCache.set(baseUrl, blob);
-        } catch (e) {
-            // skip
-        }
+        } catch (e) {}
     }));
 }
 
@@ -221,26 +218,37 @@ function getPrefetched(baseUrl) {
 }
 // ---- End prefetch ----
 
+function changeSpeed(delta) {
+    const hb = document.getElementById('heartbeat');
+    slideInterval = Math.max(3000, Math.min(15000, slideInterval + delta));
+    hb.innerText = allPhotos.length + ' (' + (slideInterval / 1000) + 's)';
+}
+
+document.getElementById('speed-down').onclick = () => changeSpeed(-1000);
+document.getElementById('speed-up').onclick = () => changeSpeed(1000);
+
 function startSlideshow(token) {
     document.getElementById('slideshow').style.display = 'block';
     document.getElementById('add-btn').style.display = 'block';
+    document.getElementById('speed-down').style.display = 'block';
+    document.getElementById('speed-up').style.display = 'block';
     let idx = Math.floor(Math.random() * allPhotos.length), showingImg1 = true;
     const img1 = document.getElementById('img1'), img2 = document.getElementById('img2');
     const bg1 = document.getElementById('bg1'), bg2 = document.getElementById('bg2');
-    
+
     document.getElementById('heartbeat').innerText = allPhotos.length;
     ensurePrefetch(token);
-    
+
     async function next() {
         if (allPhotos.length === 0) return;
-        
+
         const hb = document.getElementById('heartbeat');
-        hb.innerText = allPhotos.length;
+        hb.innerText = allPhotos.length + ' (' + (slideInterval / 1000) + 's)';
 
         const item = allPhotos[idx];
         let objectUrl = null;
         let blob = getPrefetched(item.baseUrl);
-        
+
         if (!blob) {
             try {
                 const resp = await fetch(item.baseUrl + '=w1920-h1080', {
@@ -254,36 +262,41 @@ function startSlideshow(token) {
                 return;
             }
         }
-        
+
         objectUrl = URL.createObjectURL(blob);
-        
+
         try {
             const nextImg = showingImg1 ? img2 : img1;
             const currentImg = showingImg1 ? img1 : img2;
             const nextBg = showingImg1 ? bg2 : bg1;
             const currentBg = showingImg1 ? bg1 : bg2;
-            
+
             nextImg.src = objectUrl;
             nextBg.src = objectUrl;
-            
+
+            // Ken Burns: random subtle zoom
+            const zoom = Math.random() > 0.5 ? 'scale(1.08)' : 'scale(1)';
+            nextImg.style.transform = zoom;
+            nextImg.style.transition = 'transform ' + (slideInterval / 1000) + 's ease-out, opacity 2s';
             nextImg.style.opacity = 1;
             nextBg.style.opacity = 1;
-            
+
             currentImg.style.opacity = 0;
+            currentImg.style.transform = 'scale(1)';
             currentBg.style.opacity = 0;
-            
+
             setTimeout(() => {
                 if (currentImg.src.startsWith('blob:')) URL.revokeObjectURL(currentImg.src);
                 if (currentBg.src.startsWith('blob:')) URL.revokeObjectURL(currentBg.src);
             }, 2200);
-            
+
             showingImg1 = !showingImg1;
             idx = Math.floor(Math.random() * allPhotos.length);
-            
+
             lastTransitionTime = Date.now();
 
             ensurePrefetch(token);
-            setTimeout(next, 5000);
+            setTimeout(next, slideInterval);
         } catch (e) {
             console.error(e);
             idx = Math.floor(Math.random() * allPhotos.length);
@@ -294,4 +307,3 @@ function startSlideshow(token) {
 
     next();
 }
-
