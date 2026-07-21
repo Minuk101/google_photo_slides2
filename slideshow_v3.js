@@ -169,6 +169,14 @@ async function pollPhotos(token, sessionId) {
                 filename: p.mediaFile ? p.mediaFile.filename : null
             })).filter(p => p.baseUrl);
             
+            // Debug: show sample IDs
+            let sampleExisting = allPhotos.filter(p => p.id).slice(0, 2).map(p => p.id).join(', ');
+            let sampleNew = newItems.slice(0, 3).map(p => p.id).join(', ');
+            let idCountNew = newItems.filter(p => p.id).length;
+            let idNewSet = new Set(newItems.filter(p => p.id).map(p => p.id)).size;
+            let idExistSet = new Set(allPhotos.filter(p => p.id).map(p => p.id)).size;
+            dbg.innerText = 'New IDs: ' + idCountNew + '/' + newItems.length + ' have id. Unique new: ' + idNewSet + ' | Existing unique: ' + idExistSet + ' | Samples: [' + sampleNew + '] | Old samples: [' + sampleExisting + ']';
+            
             const existingIds = new Set(allPhotos.filter(p => p.id).map(p => p.id));
             const existingUrls = new Set(allPhotos.filter(p => !p.id).map(p => p.baseUrl));
             
@@ -181,7 +189,6 @@ async function pollPhotos(token, sessionId) {
                 if (item.id) existingIds.add(item.id);
                 else existingUrls.add(item.baseUrl);
             }
-            dbg.innerText = 'Poll: got ' + allItems.length + ' items, added ' + added + ' new. Total: ' + allPhotos.length;
             
             await dbPut('photos', allPhotos);
             
@@ -255,3 +262,4 @@ function startSlideshow(token) {
 
     next();
 }
+
