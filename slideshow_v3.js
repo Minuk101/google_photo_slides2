@@ -274,8 +274,8 @@ function startSlideshow(token) {
             nextBg.style.opacity = 1;
 
             currentImg.style.opacity = 0;
-            currentImg.style.transform = 'scale(1)';
-            currentImg.style.transformOrigin = '50% 50%';
+            
+            
             currentBg.style.opacity = 0;
 
             setTimeout(() => {
@@ -300,6 +300,7 @@ function startSlideshow(token) {
 
     next();
 }
+
 
 
 
