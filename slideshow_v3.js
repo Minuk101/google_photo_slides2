@@ -331,7 +331,7 @@ function startSlideshow(token) {
             lastTransitionTime = Date.now();
 
             // Prepare the next slide's blob in background while current slide is showing
-            ensurePrefetch(token);
+            refillQueue(token);
 
 
             setTimeout(next, 5000);
