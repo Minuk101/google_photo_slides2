@@ -3,6 +3,8 @@ let allPhotos = [];
 let globalToken = null;
 let pollInterval = null;
 let lastTransitionTime = Date.now();
+let pollGeneration = 0;
+let pollInProgress = false;
 
 // ---- IndexedDB helpers ----
 const DB_NAME = 'photos_db';
@@ -128,13 +130,14 @@ async function addMorePhotos() {
     pollPhotos(globalToken, session.id);
 }
 
-let pollGeneration = 0;
-
 async function pollPhotos(token, sessionId) {
     if (pollInterval) clearInterval(pollInterval);
     const gen = ++pollGeneration;
     
     pollInterval = setInterval(async () => {
+        if (pollInProgress) return;
+        pollInProgress = true;
+        
         let allItems = [];
         let nextPageToken = null;
         
@@ -147,8 +150,8 @@ async function pollPhotos(token, sessionId) {
             nextPageToken = data.nextPageToken;
         } while (nextPageToken);
 
-        // Ignore stale responses from previous poll sessions
-        if (gen !== pollGeneration) return;
+        // Ignore stale responses
+        if (gen !== pollGeneration) { pollInProgress = false; return; }
 
         if (allItems.length > 0) {
             const newItems = allItems.map(p => ({
@@ -161,11 +164,14 @@ async function pollPhotos(token, sessionId) {
             console.log("Added", newItems.length, "photos. Total:", allPhotos.length);
             document.getElementById('heartbeat').innerText = allPhotos.length;
             clearInterval(pollInterval);
+            pollInProgress = false;
             
             if (document.getElementById('slideshow').style.display === 'none') {
                 startSlideshow(token);
             }
             document.getElementById('add-btn').style.display = 'block';
+        } else {
+            pollInProgress = false;
         }
     }, 3000);
 }
