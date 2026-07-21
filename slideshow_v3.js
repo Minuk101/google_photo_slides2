@@ -186,7 +186,6 @@ async function processQueue() {
 
 // ---- Prefetch queue: 10 pre-loaded photos, shown in order ----
 const prefetchQueue = [];
-const prefetchBlobs = new Map();
 let prefetchToken = null;
 let prefetchWorking = false;
 
@@ -308,8 +307,8 @@ function startSlideshow(token) {
             nextBg.style.transform = 'scale(1)';
             void nextImg.offsetHeight;
 
-            nextImg.src = objectUrl;
-            nextBg.src = objectUrl;
+            nextImg.src = imageUrl;
+            nextBg.src = imageUrl;
 
             nextImg.style.transition = 'transform 5s ease-out, opacity 2s';
             nextImg.style.transform = 'scale(1.05)';
@@ -320,10 +319,7 @@ function startSlideshow(token) {
             currentImg.style.opacity = 0;
             currentBg.style.opacity = 0;
 
-            setTimeout(() => {
-                if (currentImg.src.startsWith('blob:')) URL.revokeObjectURL(currentImg.src);
-                if (currentBg.src.startsWith('blob:')) URL.revokeObjectURL(currentBg.src);
-            }, 2200);
+
 
             showingImg1 = !showingImg1;
             idx = Math.floor(Math.random() * allPhotos.length);
