@@ -63,11 +63,7 @@ async function loadFromStorage() {
     const saved = await dbGet('photos');
     const token = await dbGet('token');
     if (saved && token) {
-        if (typeof saved[0] === 'string') {
-            allPhotos = saved.map(url => ({ id: null, baseUrl: url }));
-        } else {
-            allPhotos = saved;
-        }
+        allPhotos = saved;
         globalToken = token;
         return true;
     }
@@ -110,42 +106,33 @@ document.getElementById('login-btn').onclick = function() {
 };
 
 async function addMorePhotos() {
-    const dbg = document.getElementById('debug');
-    dbg.style.display = 'block';
-    dbg.innerText = 'Step 1: addMorePhotos called';
     if (!globalToken) {
-        dbg.innerText = 'Step X: no token, re-login';
         document.getElementById('login-btn').style.display = 'block';
         document.getElementById('login-btn').click();
         return;
     }
-    try {
-        dbg.innerText = 'Step 2: creating picker session...';
-        const response = await fetch('https://photospicker.googleapis.com/v1/sessions', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + globalToken }
-        });
-        dbg.innerText = 'Step 3: session status = ' + response.status;
-        if (response.status === 401) {
-            dbg.innerText = 'Step 3b: token expired';
-            await dbPut('token', '');
-            document.getElementById('login-btn').style.display = 'block';
-            document.getElementById('login-btn').click();
-            return;
-        }
-        const session = await response.json();
-        dbg.innerText = 'Step 4: pickerUri = ' + (session.pickerUri ? 'OK' : 'MISSING') + ' sessionId = ' + (session.id || '?');
-        window.open(session.pickerUri, '_blank');
-        pollPhotos(globalToken, session.id);
-    } catch (e) {
-        dbg.innerText = 'ERROR: ' + e.message;
+    const response = await fetch('https://photospicker.googleapis.com/v1/sessions', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + globalToken }
+    });
+
+    if (response.status === 401) {
+        await dbPut('token', '');
+        document.getElementById('login-btn').style.display = 'block';
+        document.getElementById('login-btn').click();
+        return;
     }
+
+    const session = await response.json();
+    window.open(session.pickerUri, '_blank');
+    pollPhotos(globalToken, session.id);
 }
 
+let pollGeneration = 0;
+
 async function pollPhotos(token, sessionId) {
-    const dbg = document.getElementById('debug');
-    dbg.innerText = 'Poll: waiting for selection (sessionId=' + sessionId + ')';
     if (pollInterval) clearInterval(pollInterval);
+    const gen = ++pollGeneration;
     
     pollInterval = setInterval(async () => {
         let allItems = [];
@@ -160,38 +147,18 @@ async function pollPhotos(token, sessionId) {
             nextPageToken = data.nextPageToken;
         } while (nextPageToken);
 
+        // Ignore stale responses from previous poll sessions
+        if (gen !== pollGeneration) return;
+
         if (allItems.length > 0) {
-            dbg.innerText = 'Poll: got ' + allItems.length + ' items. Existing: ' + allPhotos.length;
-            
             const newItems = allItems.map(p => ({
-                id: p.id,
-                baseUrl: p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl,
-                filename: p.mediaFile ? p.mediaFile.filename : null
+                baseUrl: p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl
             })).filter(p => p.baseUrl);
             
-            // Debug: show sample IDs
-            let sampleExisting = allPhotos.filter(p => p.id).slice(0, 2).map(p => p.id).join(', ');
-            let sampleNew = newItems.slice(0, 3).map(p => p.id).join(', ');
-            let idCountNew = newItems.filter(p => p.id).length;
-            let idNewSet = new Set(newItems.filter(p => p.id).map(p => p.id)).size;
-            let idExistSet = new Set(allPhotos.filter(p => p.id).map(p => p.id)).size;
-            dbg.innerText = 'New IDs: ' + idCountNew + '/' + newItems.length + ' have id. Unique new: ' + idNewSet + ' | Existing unique: ' + idExistSet + ' | Samples: [' + sampleNew + '] | Old samples: [' + sampleExisting + ']';
-            
-            const existingIds = new Set(allPhotos.filter(p => p.id).map(p => p.id));
-            const existingUrls = new Set(allPhotos.filter(p => !p.id).map(p => p.baseUrl));
-            
-            let added = 0;
-            for (const item of newItems) {
-                if (item.id && existingIds.has(item.id)) continue;
-                if (!item.id && existingUrls.has(item.baseUrl)) continue;
-                allPhotos.push(item);
-                added++;
-                if (item.id) existingIds.add(item.id);
-                else existingUrls.add(item.baseUrl);
-            }
-            
+            allPhotos.push(...newItems);
             await dbPut('photos', allPhotos);
             
+            console.log("Added", newItems.length, "photos. Total:", allPhotos.length);
             document.getElementById('heartbeat').innerText = allPhotos.length;
             clearInterval(pollInterval);
             
@@ -262,4 +229,3 @@ function startSlideshow(token) {
 
     next();
 }
-
