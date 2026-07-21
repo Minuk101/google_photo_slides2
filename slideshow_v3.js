@@ -7,14 +7,19 @@ let pollInProgress = false;
 
 // ---- IndexedDB helpers ----
 const DB_NAME = 'photos_db';
-const DB_VERSION = 1;
-const STORE_NAME = 'store';
+const DB_VERSION = 2;  // bumped for new blob store
 
 function openDB() {
     return new Promise((resolve, reject) => {
         const req = indexedDB.open(DB_NAME, DB_VERSION);
         req.onupgradeneeded = (e) => {
-            e.target.result.createObjectStore(STORE_NAME, { keyPath: 'id' });
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('store')) {
+                db.createObjectStore('store', { keyPath: 'id' });
+            }
+            if (!db.objectStoreNames.contains('blobs')) {
+                db.createObjectStore('blobs', { keyPath: 'id' });
+            }
         };
         req.onsuccess = (e) => resolve(e.target.result);
         req.onerror = (e) => reject(e.target.error);
@@ -24,8 +29,8 @@ function openDB() {
 async function dbPut(key, value) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        tx.objectStore(STORE_NAME).put({ id: key, value });
+        const tx = db.transaction('store', 'readwrite');
+        tx.objectStore('store').put({ id: key, value });
         tx.oncomplete = () => resolve();
         tx.onerror = (e) => reject(e.target.error);
     });
@@ -34,8 +39,8 @@ async function dbPut(key, value) {
 async function dbGet(key) {
     const db = await openDB();
     return new Promise((resolve) => {
-        const tx = db.transaction(STORE_NAME, 'readonly');
-        const req = tx.objectStore(STORE_NAME).get(key);
+        const tx = db.transaction('store', 'readonly');
+        const req = tx.objectStore('store').get(key);
         req.onsuccess = () => resolve(req.result ? req.result.value : null);
         req.onerror = () => resolve(null);
     });
@@ -44,8 +49,49 @@ async function dbGet(key) {
 async function dbClear() {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        tx.objectStore(STORE_NAME).clear();
+        const tx = db.transaction('store', 'readwrite');
+        tx.objectStore('store').clear();
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e.target.error);
+    });
+}
+
+// ---- Blob cache (IndexedDB, survives URL expiry) ----
+let blobCache = new Map();  // in-memory LRU: baseUrl -> Blob
+
+async function cacheBlob(baseUrl, blob) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('blobs', 'readwrite');
+        tx.objectStore('blobs').put({ id: baseUrl, blob });
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e.target.error);
+    });
+}
+
+async function getBlob(baseUrl) {
+    // Check memory first
+    if (blobCache.has(baseUrl)) return blobCache.get(baseUrl);
+    // Fall back to IndexedDB
+    const db = await openDB();
+    return new Promise((resolve) => {
+        const tx = db.transaction('blobs', 'readonly');
+        const req = tx.objectStore('blobs').get(baseUrl);
+        req.onsuccess = () => {
+            const blob = req.result ? req.result.blob : null;
+            if (blob) blobCache.set(baseUrl, blob);
+            resolve(blob);
+        };
+        req.onerror = () => resolve(null);
+    });
+}
+
+async function clearBlobs() {
+    blobCache.clear();
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('blobs', 'readwrite');
+        tx.objectStore('blobs').clear();
         tx.oncomplete = () => resolve();
         tx.onerror = (e) => reject(e.target.error);
     });
@@ -73,14 +119,14 @@ async function loadFromStorage() {
 
 function resetPhotos() {
     if (confirm("Reset all photo list?")) {
-        dbClear().then(() => location.reload());
+        clearBlobs().then(() => dbClear()).then(() => location.reload());
     }
 }
 
 window.onload = async () => {
     if (await loadFromStorage()) {
         document.getElementById('login-btn').style.display = 'none';
-        
+        startSlideshow(globalToken);
         document.getElementById('add-btn').style.display = 'block';
     }
 };
@@ -114,7 +160,7 @@ async function addMorePhotos() {
     }
     const response = await fetch('https://photospicker.googleapis.com/v1/sessions', {
         method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + token }
+        headers: { 'Authorization': 'Bearer ' + globalToken }
     });
 
     if (response.status === 401) {
@@ -143,39 +189,62 @@ async function processQueue() {
     pollInProgress = true;
     const { token, sessionId } = pollQueue[0];
     
-    while (true) {
-        let allItems = [];
-        let nextPageToken = null;
-        
-        do {
-            const url = 'https://photospicker.googleapis.com/v1/mediaItems?sessionId=' + sessionId + (nextPageToken ? '&pageToken=' + nextPageToken : '');
-            const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
-            if (res.status !== 200) break;
-            const data = await res.json();
-            if (data.mediaItems) allItems.push(...data.mediaItems);
-            nextPageToken = data.nextPageToken;
-        } while (nextPageToken);
+    // Phase 1: Get URLs from Picker
+    let allItems = [];
+    let nextPageToken = null;
+    
+    do {
+        const url = 'https://photospicker.googleapis.com/v1/mediaItems?sessionId=' + sessionId + (nextPageToken ? '&pageToken=' + nextPageToken : '');
+        const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+        if (res.status !== 200) break;
+        const data = await res.json();
+        if (data.mediaItems) allItems.push(...data.mediaItems);
+        nextPageToken = data.nextPageToken;
+    } while (nextPageToken);
 
-        if (allItems.length > 0) {
-            const newItems = allItems.map(p => ({
-                baseUrl: p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl
-            })).filter(p => p.baseUrl);
-            
-            allPhotos.push(...newItems);
-            await dbPut('photos', allPhotos);
-            
-            console.log("Added", newItems.length, "photos. Total:", allPhotos.length);
-            document.getElementById('heartbeat').innerText = allPhotos.length;
-            
-            if (document.getElementById('slideshow').style.display === 'none') {
-                
-            }
-            document.getElementById('add-btn').style.display = 'block';
-            break;
-        }
-        
-        await new Promise(r => setTimeout(r, 3000));
+    if (allItems.length === 0) {
+        pollInProgress = false;
+        // Keep polling
+        setTimeout(() => { pollInProgress = false; processQueue(); }, 3000);
+        return;
     }
+    
+    const newItems = allItems.map(p => ({
+        baseUrl: p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl
+    })).filter(p => p.baseUrl);
+    
+    // Phase 2: Download all images as blobs (so they never expire)
+    const hb = document.getElementById('heartbeat');
+    hb.innerText = 'Downloading 0/' + newItems.length;
+    
+    let downloaded = 0;
+    for (const item of newItems) {
+        try {
+            const resp = await fetch(item.baseUrl + '=w1920-h1080', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            const blob = await resp.blob();
+            await cacheBlob(item.baseUrl, blob);
+        } catch (e) {
+            // Skip failed downloads
+        }
+        downloaded++;
+        if (downloaded % 10 === 0) {
+            hb.innerText = 'Downloading ' + downloaded + '/' + newItems.length;
+        }
+    }
+    
+    // Phase 3: Add to allPhotos and save
+    allPhotos.push(...newItems);
+    await dbPut('photos', allPhotos);
+    
+    console.log("Added", newItems.length, "photos. Total:", allPhotos.length);
+    hb.innerText = allPhotos.length;
+    
+    if (document.getElementById('slideshow').style.display === 'none') {
+        startSlideshow(token);
+    }
+    document.getElementById('add-btn').style.display = 'block';
     
     pollQueue.shift();
     pollInProgress = false;
@@ -198,14 +267,30 @@ function startSlideshow(token) {
         hb.innerText = allPhotos.length;
 
         const item = allPhotos[idx];
-        const url = item.baseUrl + '=w1920-h1080';
         let objectUrl = null;
         
+        // Try to get blob from cache first (no network, never expires)
+        let blob = await getBlob(item.baseUrl);
+        
+        if (!blob) {
+            // Fallback: fetch from network (should rarely happen)
+            try {
+                const resp = await fetch(item.baseUrl + '=w1920-h1080', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                blob = await resp.blob();
+                await cacheBlob(item.baseUrl, blob);
+            } catch (e) {
+                console.error("Failed to load photo, skipping");
+                idx = Math.floor(Math.random() * allPhotos.length);
+                setTimeout(next, 1000);
+                return;
+            }
+        }
+        
+        objectUrl = URL.createObjectURL(blob);
+        
         try {
-            const response = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
-            const blob = await response.blob();
-            objectUrl = URL.createObjectURL(blob);
-            
             const nextImg = showingImg1 ? img2 : img1;
             const currentImg = showingImg1 ? img1 : img2;
             const nextBg = showingImg1 ? bg2 : bg1;
@@ -241,4 +326,3 @@ function startSlideshow(token) {
 
     next();
 }
-
