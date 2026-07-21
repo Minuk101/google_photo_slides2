@@ -278,13 +278,14 @@ function startSlideshow(token) {
             showingImg1 = !showingImg1;
             lastTransitionTime = Date.now();
         } catch (e) {
-            console.error('Slide error, skipping');
+            console.error('Slide error:', e.message || e);
             if (objectUrl) URL.revokeObjectURL(objectUrl);
         }
     }
 
     next();
 }
+
 
 
 
