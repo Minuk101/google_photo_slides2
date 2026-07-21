@@ -16,7 +16,6 @@ const QUEUE_SIZE = 12;
 const PREFETCH_AHEAD = 4;
 const BULK_PREFETCH_CONCURRENCY = 2;
 const MAX_MEMORY_BLOBS = 5;
-const TOKEN_REFRESH_LEAD_MS = 5 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 3000;
 const DEFAULT_SESSION_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -26,7 +25,6 @@ let tokenExpiresAt = 0;
 let tokenClient = null;
 let tokenRequestPromise = null;
 let pendingTokenResolver = null;
-let tokenRefreshTimer = null;
 
 const pollQueue = [];
 let pollInProgress = false;
@@ -44,6 +42,9 @@ const bulkPrefetchQueue = [];
 const bulkPrefetchScheduled = new Set();
 const bulkPrefetchCompleted = new Set();
 let bulkPrefetchActive = 0;
+let bulkPrefetchPausedForAuth = false;
+let bulkPrefetchRetryTimer = null;
+let cacheNeedsAuthorization = false;
 
 let lastTransitionTime = Date.now();
 
@@ -192,43 +193,11 @@ function hasUsableToken() {
     return Boolean(globalToken && Date.now() < tokenExpiresAt - 30000);
 }
 
-function clearTokenRefreshTimer() {
-    if (tokenRefreshTimer) {
-        clearTimeout(tokenRefreshTimer);
-        tokenRefreshTimer = null;
-    }
-}
-
-function scheduleTokenRefresh() {
-    clearTokenRefreshTimer();
-    if (!globalToken || !tokenExpiresAt) return;
-
-    const refreshIn = Math.max(
-        60000,
-        tokenExpiresAt - Date.now() - TOKEN_REFRESH_LEAD_MS
-    );
-
-    tokenRefreshTimer = setTimeout(async () => {
-        try {
-            const refreshed = await requestAccessToken(false);
-            if (refreshed) {
-                scheduleTokenRefresh();
-                return;
-            }
-        } catch (error) {
-            console.warn('Automatic token refresh failed:', error);
-        }
-
-        if (globalToken) {
-            tokenRefreshTimer = setTimeout(scheduleTokenRefresh, 5 * 60 * 1000);
-        }
-    }, refreshIn);
-}
-
 function applyToken(response) {
     globalToken = response.access_token;
     tokenExpiresAt = Date.now() + (Number(response.expires_in) || 3600) * 1000;
-    scheduleTokenRefresh();
+    cacheNeedsAuthorization = false;
+    bulkPrefetchPausedForAuth = false;
 
     if (allPhotos.length > 0) {
         scheduleBulkPrefetch();
@@ -272,7 +241,7 @@ function initTokenClient() {
     });
 }
 
-async function requestAccessToken(interactive) {
+async function requestAccessToken() {
     if (hasUsableToken()) return globalToken;
     if (tokenRequestPromise) return tokenRequestPromise;
 
@@ -282,7 +251,7 @@ async function requestAccessToken(interactive) {
 
         return new Promise(resolve => {
             pendingTokenResolver = resolve;
-            tokenClient.requestAccessToken(interactive ? {} : { prompt: 'none' });
+            tokenClient.requestAccessToken();
         });
     })();
 
@@ -299,11 +268,9 @@ function authRequiredError() {
     return error;
 }
 
-async function getValidToken(interactive = false) {
-    if (hasUsableToken()) return globalToken;
-    const token = await requestAccessToken(interactive);
-    if (!token) throw authRequiredError();
-    return token;
+function getValidToken() {
+    if (!hasUsableToken()) throw authRequiredError();
+    return globalToken;
 }
 // ---- End Authentication ----
 
@@ -328,18 +295,14 @@ async function fetchOnce(url, init, token, timeoutMs) {
 }
 
 async function authenticatedFetch(url, init = {}, timeoutMs = API_FETCH_TIMEOUT_MS) {
-    let token = await getValidToken(false);
-    let response = await fetchOnce(url, init, token, timeoutMs);
+    const token = getValidToken();
+    const response = await fetchOnce(url, init, token, timeoutMs);
 
     if (response.status !== 401) return response;
 
     globalToken = null;
     tokenExpiresAt = 0;
-    clearTokenRefreshTimer();
-
-    token = await requestAccessToken(false);
-    if (!token) return response;
-    return fetchOnce(url, init, token, timeoutMs);
+    throw authRequiredError();
 }
 
 async function fetchPhotoBlob(photo) {
@@ -401,6 +364,53 @@ async function getPhotoBlob(photo) {
 // ---- End API and media loading ----
 
 // ---- Persistent background prefetch ----
+function getCacheProgress() {
+    const photoKeys = new Set(allPhotos.map(getPhotoKey));
+    let completed = 0;
+    for (const key of photoKeys) {
+        if (bulkPrefetchCompleted.has(key)) completed++;
+    }
+    return { completed, total: photoKeys.size };
+}
+
+function updateCacheStatus() {
+    const status = document.getElementById('cache-status');
+    const { completed, total } = getCacheProgress();
+
+    if (total === 0) {
+        status.style.display = 'none';
+        return;
+    }
+
+    status.style.display = 'block';
+    if (completed >= total) {
+        cacheNeedsAuthorization = false;
+        bulkPrefetchPausedForAuth = false;
+        status.dataset.state = 'complete';
+        status.textContent = `로컬 저장 완료 ${completed}/${total}`;
+    } else if (cacheNeedsAuthorization) {
+        status.dataset.state = 'action';
+        status.textContent = `로컬 저장 ${completed}/${total} · 눌러서 계속`;
+    } else {
+        status.dataset.state = 'loading';
+        status.textContent = `로컬 저장 중 ${completed}/${total}`;
+    }
+}
+
+function markCacheAuthorizationRequired() {
+    cacheNeedsAuthorization = true;
+    bulkPrefetchPausedForAuth = true;
+    updateCacheStatus();
+}
+
+function scheduleBulkPrefetchRetry() {
+    if (bulkPrefetchRetryTimer || bulkPrefetchPausedForAuth) return;
+    bulkPrefetchRetryTimer = setTimeout(() => {
+        bulkPrefetchRetryTimer = null;
+        scheduleBulkPrefetch();
+    }, 15000);
+}
+
 function scheduleBulkPrefetch() {
     for (const photo of allPhotos) {
         const key = getPhotoKey(photo);
@@ -410,11 +420,13 @@ function scheduleBulkPrefetch() {
         bulkPrefetchScheduled.add(key);
         bulkPrefetchQueue.push(photo);
     }
+    updateCacheStatus();
     pumpBulkPrefetch();
 }
 
 function pumpBulkPrefetch() {
     while (
+        !bulkPrefetchPausedForAuth &&
         bulkPrefetchActive < BULK_PREFETCH_CONCURRENCY &&
         bulkPrefetchQueue.length > 0
     ) {
@@ -425,13 +437,16 @@ function pumpBulkPrefetch() {
         getPhotoBlob(photo)
             .then(() => {
                 bulkPrefetchCompleted.add(key);
+                updateCacheStatus();
             })
             .catch(error => {
                 console.warn('Background prefetch failed:', key, error);
                 bulkPrefetchScheduled.delete(key);
 
-                if (error.code !== 'AUTH_REQUIRED') {
-                    setTimeout(scheduleBulkPrefetch, 15000);
+                if (error.code === 'AUTH_REQUIRED') {
+                    markCacheAuthorizationRequired();
+                } else {
+                    scheduleBulkPrefetchRetry();
                 }
             })
             .finally(() => {
@@ -447,6 +462,9 @@ function pumpSlidePrefetch() {
         if (!memoryBlobCache.has(key) && !pendingBlobLoads.has(key)) {
             getPhotoBlob(photo).catch(error => {
                 console.warn('Slide prefetch failed:', key, error);
+                if (error.code === 'AUTH_REQUIRED') {
+                    markCacheAuthorizationRequired();
+                }
             });
         }
     }
@@ -727,6 +745,9 @@ async function advanceSlide() {
         scheduleNextSlide(SLIDE_INTERVAL_MS);
     } catch (error) {
         console.error('Slide error:', error);
+        if (error.code === 'AUTH_REQUIRED') {
+            markCacheAuthorizationRequired();
+        }
         if (photo) slideQueue.push(photo);
         scheduleNextSlide(RETRY_INTERVAL_MS);
     } finally {
@@ -766,9 +787,10 @@ async function loadFromStorage() {
 
 async function openPicker() {
     const popup = window.open('about:blank', '_blank');
+    requestPersistentStorage();
 
     try {
-        const token = await requestAccessToken(true);
+        const token = await requestAccessToken();
         if (!token) {
             if (popup) popup.close();
             return;
@@ -796,6 +818,37 @@ async function addMorePhotos() {
     await openPicker();
 }
 
+async function requestPersistentStorage() {
+    if (!navigator.storage || !navigator.storage.persist) return;
+
+    try {
+        const alreadyPersistent = navigator.storage.persisted
+            ? await navigator.storage.persisted()
+            : false;
+        if (!alreadyPersistent) await navigator.storage.persist();
+    } catch (error) {
+        console.warn('Persistent storage request failed:', error);
+    }
+}
+
+async function resumeCacheDownload(event) {
+    event.stopPropagation();
+    if (!cacheNeedsAuthorization) return;
+
+    try {
+        const token = await requestAccessToken();
+        if (!token) return;
+
+        cacheNeedsAuthorization = false;
+        bulkPrefetchPausedForAuth = false;
+        scheduleBulkPrefetch();
+        pumpSlidePrefetch();
+    } catch (error) {
+        console.error('Could not resume local storage:', error);
+        markCacheAuthorizationRequired();
+    }
+}
+
 async function resetPhotos() {
     if (!confirm('Reset all photo list?')) return;
 
@@ -808,6 +861,7 @@ async function resetPhotos() {
 }
 
 document.getElementById('login-btn').onclick = openPicker;
+document.getElementById('cache-status').onclick = resumeCacheDownload;
 
 window.onload = async () => {
     if (await loadFromStorage()) {
