@@ -184,7 +184,7 @@ async function processQueue() {
     processQueue();
 }
 
-// Minimal EXIF GPS reader (no external library needed)
+// Debug EXIF parser
 async function testGPS() {
     const item = allPhotos[0];
     if (!item) { alert("No photos loaded"); return; }
@@ -195,77 +195,141 @@ async function testGPS() {
         const buf = await resp.arrayBuffer();
         const dv = new DataView(buf);
         
-        // Find EXIF header
-        if (dv.getUint16(0) !== 0xFFD8) { alert("Not a JPEG"); return; }
+        let msg = "Size: " + (buf.byteLength / 1024).toFixed(0) + "KB\n";
         
+        // Check file signature
+        const sig = dv.getUint16(0).toString(16);
+        msg += "Signature: 0x" + sig + "\n";
+        if (sig !== "ffd8") { alert(msg + "\nNot a JPEG. It's " + sig); return; }
+        
+        // Read first APP marker
+        const app1 = dv.getUint16(2).toString(16);
+        msg += "First marker at 2: 0x" + app1 + "\n";
+        
+        // Check for Exif header
         let offset = 2;
-        while (offset < buf.byteLength) {
-            if (dv.getUint16(offset) === 0xFFE1) {
-                const exifLen = dv.getUint16(offset + 2);
-                const exifStart = offset + 4;
-                const tiffStart = exifStart + 6; // skip "Exif\0\0"
+        let appFound = false;
+        while (offset < Math.min(buf.byteLength, 50000)) {
+            const marker = dv.getUint16(offset);
+            if (marker === 0xFFE1) {
+                appFound = true;
+                const len = dv.getUint16(offset + 2);
+                msg += "APP1 found at " + offset + ", len=" + len + "\n";
                 
-                const littleEndian = dv.getUint16(tiffStart) === 0x4949;
-                const ifd0Offset = dv.getUint32(tiffStart + 4, littleEndian) + tiffStart;
+                const exifId = String.fromCharCode(dv.getUint8(offset + 4), dv.getUint8(offset + 5), dv.getUint8(offset + 6), dv.getUint8(offset + 7), dv.getUint8(offset + 8), dv.getUint8(offset + 9));
+                msg += "Exif ID: '" + exifId + "'\n";
                 
-                // Parse IFD0 to find GPS IFD pointer (tag 0x8825)
-                let gpsIfdOffset = 0;
-                const numEntries = dv.getUint16(ifd0Offset, littleEndian);
+                if (exifId !== "Exif\0\0") { alert(msg + "\nNo Exif header"); return; }
+                
+                const tiffStart = offset + 10;
+                const byteOrder = dv.getUint16(tiffStart).toString(16);
+                msg += "TIFF byte order: 0x" + byteOrder + "\n";
+                
+                const le = byteOrder === "4949";
+                const magic = dv.getUint16(tiffStart + 2, le).toString(16);
+                msg += "TIFF magic: 0x" + magic + "\n";
+                
+                if (magic !== "002a" && magic !== "2a00") { alert(msg + "\nNot TIFF"); return; }
+                
+                const ifd0Off = dv.getUint32(tiffStart + 4, le);
+                msg += "IFD0 offset: " + ifd0Off + "\n";
+                
+                const ifd0Start = tiffStart + ifd0Off;
+                const numEntries = dv.getUint16(ifd0Start, le);
+                msg += "IFD0 entries: " + numEntries + "\n";
+                
+                let gpsIfdOff = null;
                 for (let i = 0; i < numEntries; i++) {
-                    const entryOff = ifd0Offset + 2 + i * 12;
-                    const tag = dv.getUint16(entryOff, littleEndian);
-                    if (tag === 0x8825) {
-                        gpsIfdOffset = dv.getUint32(entryOff + 8, littleEndian) + tiffStart;
+                    const entryOff = ifd0Start + 2 + i * 12;
+                    const tag = dv.getUint16(entryOff, le).toString(16);
+                    if (tag === "8825") {
+                        gpsIfdOff = dv.getUint32(entryOff + 8, le);
+                        msg += "GPS IFD pointer found: " + gpsIfdOff + "\n";
                         break;
                     }
                 }
                 
-                if (!gpsIfdOffset) { alert("No GPS IFD found."); return; }
+                if (gpsIfdOff === null) {
+                    // Try to parse SubIFD (tag 0x8769 for ExifIFD, which may contain GPS)
+                    msg += "No GPS tag in IFD0. Checking other tags...\n";
+                    for (let i = 0; i < numEntries; i++) {
+                        const entryOff = ifd0Start + 2 + i * 12;
+                        const tag = dv.getUint16(entryOff, le).toString(16);
+                        const type = dv.getUint16(entryOff + 2, le);
+                        msg += "  Tag: 0x" + tag + " Type:" + type + "\n";
+                    }
+                    alert(msg);
+                    return;
+                }
                 
-                // Parse GPS IFD
-                const gpsEntries = dv.getUint16(gpsIfdOffset, littleEndian);
-                let latRef = 'N', lonRef = 'E';
-                let latData = null, lonData = null;
+                const gpsStart = tiffStart + gpsIfdOff;
+                const gpsEntries = dv.getUint16(gpsStart, le);
+                msg += "GPS IFD entries: " + gpsEntries + "\n";
+                
+                let latData = null, lonData = null, latRef = "N", lonRef = "E";
                 
                 for (let i = 0; i < gpsEntries; i++) {
-                    const entryOff = gpsIfdOffset + 2 + i * 12;
-                    const tag = dv.getUint16(entryOff, littleEndian);
-                    const type = dv.getUint16(entryOff + 2, littleEndian);
-                    const count = dv.getUint32(entryOff + 4, littleEndian);
-                    const valueOff = count > 1 ? dv.getUint32(entryOff + 8, littleEndian) + tiffStart : entryOff + 8;
+                    const entryOff = gpsStart + 2 + i * 12;
+                    const tag = dv.getUint16(entryOff, le);
+                    const type = dv.getUint16(entryOff + 2, le);
+                    const count = dv.getUint32(entryOff + 4, le);
                     
-                    if (tag === 0x0001) { // GPSLatitudeRef
+                    msg += "  GPS tag: 0x" + tag.toString(16) + " type:" + type + " count:" + count + "\n";
+                    
+                    const valueOff = count > 1 ? tiffStart + dv.getUint32(entryOff + 8, le) : entryOff + 8;
+                    
+                    if (tag === 0x01) {
                         latRef = String.fromCharCode(dv.getUint8(valueOff));
-                    } else if (tag === 0x0002) { // GPSLatitude
-                        latData = [dv.getUint32(valueOff, littleEndian) / dv.getUint32(valueOff + 4, littleEndian),
-                                   dv.getUint32(valueOff + 8, littleEndian) / dv.getUint32(valueOff + 12, littleEndian),
-                                   dv.getUint32(valueOff + 16, littleEndian) / dv.getUint32(valueOff + 20, littleEndian)];
-                    } else if (tag === 0x0003) { // GPSLongitudeRef
+                    } else if (tag === 0x02) {
+                        latData = [
+                            dv.getUint32(valueOff, le) / dv.getUint32(valueOff + 4, le),
+                            dv.getUint32(valueOff + 8, le) / dv.getUint32(valueOff + 12, le),
+                            dv.getUint32(valueOff + 16, le) / dv.getUint32(valueOff + 20, le)
+                        ];
+                    } else if (tag === 0x03) {
                         lonRef = String.fromCharCode(dv.getUint8(valueOff));
-                    } else if (tag === 0x0004) { // GPSLongitude
-                        lonData = [dv.getUint32(valueOff, littleEndian) / dv.getUint32(valueOff + 4, littleEndian),
-                                   dv.getUint32(valueOff + 8, littleEndian) / dv.getUint32(valueOff + 12, littleEndian),
-                                   dv.getUint32(valueOff + 16, littleEndian) / dv.getUint32(valueOff + 20, littleEndian)];
+                    } else if (tag === 0x04) {
+                        lonData = [
+                            dv.getUint32(valueOff, le) / dv.getUint32(valueOff + 4, le),
+                            dv.getUint32(valueOff + 8, le) / dv.getUint32(valueOff + 12, le),
+                            dv.getUint32(valueOff + 16, le) / dv.getUint32(valueOff + 20, le)
+                        ];
                     }
                 }
                 
                 if (latData && lonData) {
                     const lat = latData[0] + latData[1]/60 + latData[2]/3600;
                     const lon = lonData[0] + lonData[1]/60 + lonData[2]/3600;
-                    const latStr = (latRef === 'S' ? -lat : lat).toFixed(6);
-                    const lonStr = (lonRef === 'W' ? -lon : lon).toFixed(6);
-                    alert("GPS found!\nLat: " + latStr + "\nLng: " + lonStr + "\n\nOpen: https://www.openstreetmap.org/?mlat=" + latStr + "&mlon=" + lonStr);
+                    const latStr = (latRef === "S" ? -lat : lat).toFixed(6);
+                    const lonStr = (lonRef === "W" ? -lon : lon).toFixed(6);
+                    msg += "\nGPS found!\nLat: " + latStr + "\nLng: " + lonStr;
+                    alert(msg + "\n\nOpening OpenStreetMap...");
                     window.open("https://www.openstreetmap.org/?mlat=" + latStr + "&mlon=" + lonStr, "_blank");
                 } else {
-                    alert("No GPS coordinates in the EXIF data.");
+                    msg += "\nGPS tags incomplete. lat=" + (!!latData) + " lon=" + (!!lonData);
+                    alert(msg);
                 }
                 return;
             }
             offset++;
+            if (offset > buf.byteLength - 2) break;
         }
-        alert("No EXIF data found in this JPEG.");
+        
+        if (!appFound) {
+            msg += "\nNo APP1 EXIF marker found in first 50KB.";
+            // Check if there are any APP markers at all
+            let markers = [];
+            for (let i = 2; i < Math.min(buf.byteLength - 1, 200); i++) {
+                if (dv.getUint8(i) === 0xFF && (dv.getUint8(i+1) & 0xF0) === 0xE0) {
+                    markers.push("0x" + dv.getUint16(i).toString(16));
+                }
+            }
+            msg += "\nFound APP markers nearby: " + (markers.length ? markers.join(", ") : "none");
+        }
+        
+        alert(msg);
     } catch (e) {
-        alert("Error: " + e.message);
+        alert("Error: " + e.message + "\n\n" + e.stack);
     }
 }
 
@@ -329,4 +393,5 @@ function startSlideshow(token) {
 
     next();
 }
+
 
