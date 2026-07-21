@@ -1,4 +1,4 @@
-const CLIENT_ID = '232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleusercontent.com';
+ï»¿const CLIENT_ID = '232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleusercontent.com';
 let allPhotos = [];
 let globalToken = null;
 let lastTransitionTime = Date.now();
@@ -195,13 +195,13 @@ const slideQueue = [];
 async function refillQueue() {
     const usedUrls = new Set(slideQueue.map(p => p.baseUrl));
     
-    // Å¥¸¦ 10°³·Î Ã¤¿ì¸é¼­ prefetch
+    // Å¥ï¿½ï¿½ 10ï¿½ï¿½ï¿½ï¿½ Ã¤ï¿½ï¿½é¼­ prefetch
     while (slideQueue.length < 10 && allPhotos.length > 0) {
         let found = false;
         for (let tries = 0; tries < 30; tries++) {
             const pick = allPhotos[Math.floor(Math.random() * allPhotos.length)];
             if (!usedUrls.has(pick.baseUrl)) {
-                // blob ¹Ì¸® ¹Þ¾Æ¿À±â
+                // blob ï¿½Ì¸ï¿½ ï¿½Þ¾Æ¿ï¿½ï¿½ï¿½
                 try {
                     const controller = new AbortController();
                     const timeoutId = setTimeout(() => controller.abort(), 3000);
@@ -218,7 +218,7 @@ async function refillQueue() {
                         found = true;
                     }
                 } catch (e) {
-                    // prefetch ½ÇÆÐÇÏ¸é Å¥¿¡ ³ÖÁö ¾ÊÀ½
+                    // prefetch ï¿½ï¿½ï¿½ï¿½ï¿½Ï¸ï¿½ Å¥ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
                 }
                 break;
             }
@@ -239,13 +239,13 @@ function startSlideshow(token) {
     async function next() {
         if (allPhotos.length === 0) return;
 
-        await refillQueue();
+        refillQueue();
 
         const item = slideQueue.length > 0 ? slideQueue.shift() : allPhotos[Math.floor(Math.random() * allPhotos.length)];
         let objectUrl = null;
 
         try {
-            // prefetchµÈ blobÀÌ ÀÖÀ¸¸é »ç¿ë, ¾øÀ¸¸é fallback
+            // prefetchï¿½ï¿½ blobï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½, ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ fallback
             const blob = item.blob || await (async () => {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 3000);
@@ -303,7 +303,7 @@ function startSlideshow(token) {
             if (objectUrl) URL.revokeObjectURL(objectUrl);
         }
         
-        setTimeout(next, 5000);
+       
     }
 
     next();
