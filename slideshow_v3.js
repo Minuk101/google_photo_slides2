@@ -64,7 +64,7 @@ async function loadFromStorage() {
     const token = await dbGet('token');
     if (saved && token) {
         if (typeof saved[0] === 'string') {
-            allPhotos = saved.map(url => ({ id: null, baseUrl: url }));
+            allPhotos = saved.map(url => ({ baseUrl: url }));
         } else {
             allPhotos = saved;
         }
@@ -150,25 +150,19 @@ async function pollPhotos(token, sessionId) {
         } while (nextPageToken);
 
         if (allItems.length > 0) {
+            console.log("Sample raw item:", JSON.stringify(allItems[0]));
+            
             const newItems = allItems.map(p => ({
-                baseUrl: p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl
+                baseUrl: p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl,
+                filename: p.mediaFile ? p.mediaFile.filename : null
             })).filter(p => p.baseUrl);
             
-            // Deduplicate by baseUrl path (stable across sessions)
-            function photoKey(url) {
-                try {
-                    const u = new URL(url);
-                    return u.pathname;
-                } catch (e) {
-                    return url;
-                }
-            }
-            const existingKeys = new Set(allPhotos.map(p => photoKey(p.baseUrl)));
+            // Deduplicate: first by URL, then by filename
+            const existingUrls = new Set(allPhotos.map(p => p.baseUrl));
             for (const item of newItems) {
-                const key = photoKey(item.baseUrl);
-                if (!existingKeys.has(key)) {
+                if (!existingUrls.has(item.baseUrl)) {
                     allPhotos.push(item);
-                    existingKeys.add(key);
+                    existingUrls.add(item.baseUrl);
                 }
             }
             
@@ -245,4 +239,3 @@ function startSlideshow(token) {
 
     next();
 }
-
