@@ -63,11 +63,10 @@ async function loadFromStorage() {
     const saved = await dbGet('photos');
     const token = await dbGet('token');
     if (saved && token) {
-        // Handle old format (string[]) and new format ({id, baseUrl}[])
         if (typeof saved[0] === 'string') {
             allPhotos = saved.map(url => ({ id: null, baseUrl: url }));
         } else {
-            allPhotos = saved.map(p => ({ id: p.id, baseUrl: p.baseUrl }));
+            allPhotos = saved;
         }
         globalToken = token;
         return true;
@@ -151,12 +150,29 @@ async function pollPhotos(token, sessionId) {
         } while (nextPageToken);
 
         if (allItems.length > 0) {
-            const newUrls = allItems.map(p => p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl).filter(url => url); 
-            const uniqueUrls = new Set([...allPhotos.map(p => p.baseUrl), ...newUrls]);
-            allPhotos = Array.from(uniqueUrls).map(url => ({ baseUrl: url }));
+            const newItems = allItems.map(p => ({
+                baseUrl: p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl
+            })).filter(p => p.baseUrl);
             
-            const urlsOnly = allPhotos.map(p => p.baseUrl);
-            await dbPut('photos', urlsOnly);
+            // Deduplicate by baseUrl path (stable across sessions)
+            function photoKey(url) {
+                try {
+                    const u = new URL(url);
+                    return u.pathname;
+                } catch (e) {
+                    return url;
+                }
+            }
+            const existingKeys = new Set(allPhotos.map(p => photoKey(p.baseUrl)));
+            for (const item of newItems) {
+                const key = photoKey(item.baseUrl);
+                if (!existingKeys.has(key)) {
+                    allPhotos.push(item);
+                    existingKeys.add(key);
+                }
+            }
+            
+            await dbPut('photos', allPhotos);
             
             console.log("Total photos:", allPhotos.length);
             document.getElementById('heartbeat').innerText = allPhotos.length;
@@ -229,8 +245,4 @@ function startSlideshow(token) {
 
     next();
 }
-
-
-
-
 
