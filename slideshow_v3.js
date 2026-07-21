@@ -215,7 +215,8 @@ function startSlideshow(token) {
             nextBg.src = objectUrl;
             
             nextImg.style.opacity = 1;
-            nextBg.style.opacity = 0.6;
+            nextBg.style.opacity = 1;
+            nextBg.style.filter = "blur(25px) brightness(0.7)";
             
             currentImg.style.opacity = 0;
             currentBg.style.opacity = 0;
@@ -241,3 +242,5 @@ function startSlideshow(token) {
 
     next();
 }
+
+
