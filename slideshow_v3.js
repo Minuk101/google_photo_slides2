@@ -1,8 +1,8 @@
 ﻿const CLIENT_ID = '232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleusercontent.com';
 let allPhotos = [];
 let globalToken = null;
-let pollInterval = null;
 let lastTransitionTime = Date.now();
+let pollQueue = [];
 let pollInProgress = false;
 
 // ---- IndexedDB helpers ----
@@ -99,7 +99,7 @@ document.getElementById('login-btn').onclick = function() {
                 }).then(r => r.json());
                 window.open(session.pickerUri, '_blank');
                 document.getElementById('login-btn').style.display = 'none';
-                pollPhotos(res.access_token, session.id);
+                queuePhotos(globalToken, session.id);
             }
         }
     });
@@ -107,7 +107,6 @@ document.getElementById('login-btn').onclick = function() {
 };
 
 async function addMorePhotos() {
-    pollInProgress = false;
     if (!globalToken) {
         document.getElementById('login-btn').style.display = 'block';
         document.getElementById('login-btn').click();
@@ -127,16 +126,25 @@ async function addMorePhotos() {
 
     const session = await response.json();
     window.open(session.pickerUri, '_blank');
-    pollPhotos(globalToken, session.id);
+    
+    pollQueue.push({ token: globalToken, sessionId: session.id });
+    processQueue();
 }
 
-async function pollPhotos(token, sessionId) {
-    if (pollInterval) clearInterval(pollInterval);
+function queuePhotos(token, sessionId) {
+    pollQueue.push({ token, sessionId });
+    processQueue();
+}
+
+async function processQueue() {
+    if (pollInProgress) return;
+    if (pollQueue.length === 0) return;
     
-    pollInterval = setInterval(async () => {
-        if (pollInProgress) return;
-        pollInProgress = true;
-        
+    pollInProgress = true;
+    const { token, sessionId } = pollQueue[0];
+    
+    // Poll until Picker session has data
+    while (true) {
         let allItems = [];
         let nextPageToken = null;
         
@@ -159,17 +167,21 @@ async function pollPhotos(token, sessionId) {
             
             console.log("Added", newItems.length, "photos. Total:", allPhotos.length);
             document.getElementById('heartbeat').innerText = allPhotos.length;
-            clearInterval(pollInterval);
-            pollInProgress = false;
             
             if (document.getElementById('slideshow').style.display === 'none') {
                 startSlideshow(token);
             }
             document.getElementById('add-btn').style.display = 'block';
-        } else {
-            pollInProgress = false;
+            break;
         }
-    }, 3000);
+        
+        // Wait 3s and try again
+        await new Promise(r => setTimeout(r, 3000));
+    }
+    
+    pollQueue.shift();
+    pollInProgress = false;
+    processQueue(); // Start next in queue
 }
 
 function startSlideshow(token) {
@@ -231,5 +243,3 @@ function startSlideshow(token) {
 
     next();
 }
-
-
