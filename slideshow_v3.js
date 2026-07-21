@@ -63,7 +63,6 @@ async function loadFromStorage() {
     const saved = await dbGet('photos');
     const token = await dbGet('token');
     if (saved && token) {
-        // Handle old format (string[]) — upgrade to object format
         if (typeof saved[0] === 'string') {
             allPhotos = saved.map(url => ({ id: null, baseUrl: url }));
         } else {
@@ -111,30 +110,41 @@ document.getElementById('login-btn').onclick = function() {
 };
 
 async function addMorePhotos() {
+    const dbg = document.getElementById('debug');
+    dbg.style.display = 'block';
+    dbg.innerText = 'Step 1: addMorePhotos called';
     if (!globalToken) {
+        dbg.innerText = 'Step X: no token, re-login';
         document.getElementById('login-btn').style.display = 'block';
         document.getElementById('login-btn').click();
         return;
     }
-    const response = await fetch('https://photospicker.googleapis.com/v1/sessions', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + globalToken }
-    });
-
-    if (response.status === 401) {
-        await dbPut('token', '');
-        document.getElementById('login-btn').style.display = 'block';
-        document.getElementById('login-btn').click();
-        return;
+    try {
+        dbg.innerText = 'Step 2: creating picker session...';
+        const response = await fetch('https://photospicker.googleapis.com/v1/sessions', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + globalToken }
+        });
+        dbg.innerText = 'Step 3: session status = ' + response.status;
+        if (response.status === 401) {
+            dbg.innerText = 'Step 3b: token expired';
+            await dbPut('token', '');
+            document.getElementById('login-btn').style.display = 'block';
+            document.getElementById('login-btn').click();
+            return;
+        }
+        const session = await response.json();
+        dbg.innerText = 'Step 4: pickerUri = ' + (session.pickerUri ? 'OK' : 'MISSING') + ' sessionId = ' + (session.id || '?');
+        window.open(session.pickerUri, '_blank');
+        pollPhotos(globalToken, session.id);
+    } catch (e) {
+        dbg.innerText = 'ERROR: ' + e.message;
     }
-
-    const session = await response.json();
-    window.open(session.pickerUri, '_blank');
-    pollPhotos(globalToken, session.id);
 }
 
 async function pollPhotos(token, sessionId) {
-    console.log("Waiting for photo selection...");
+    const dbg = document.getElementById('debug');
+    dbg.innerText = 'Poll: waiting for selection (sessionId=' + sessionId + ')';
     if (pollInterval) clearInterval(pollInterval);
     
     pollInterval = setInterval(async () => {
@@ -151,28 +161,30 @@ async function pollPhotos(token, sessionId) {
         } while (nextPageToken);
 
         if (allItems.length > 0) {
-            // Picker API's mediaItem.id is the stable Google Photos item ID
+            dbg.innerText = 'Poll: got ' + allItems.length + ' items. Existing: ' + allPhotos.length;
+            
             const newItems = allItems.map(p => ({
                 id: p.id,
                 baseUrl: p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl,
                 filename: p.mediaFile ? p.mediaFile.filename : null
             })).filter(p => p.baseUrl);
             
-            // Dedup by stable Google Photos ID (or fallback to URL for old items)
             const existingIds = new Set(allPhotos.filter(p => p.id).map(p => p.id));
             const existingUrls = new Set(allPhotos.filter(p => !p.id).map(p => p.baseUrl));
             
+            let added = 0;
             for (const item of newItems) {
                 if (item.id && existingIds.has(item.id)) continue;
                 if (!item.id && existingUrls.has(item.baseUrl)) continue;
                 allPhotos.push(item);
+                added++;
                 if (item.id) existingIds.add(item.id);
                 else existingUrls.add(item.baseUrl);
             }
+            dbg.innerText = 'Poll: got ' + allItems.length + ' items, added ' + added + ' new. Total: ' + allPhotos.length;
             
             await dbPut('photos', allPhotos);
             
-            console.log("Total photos (deduped):", allPhotos.length);
             document.getElementById('heartbeat').innerText = allPhotos.length;
             clearInterval(pollInterval);
             
