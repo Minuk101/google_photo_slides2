@@ -10,6 +10,11 @@
         if ("serviceWorker" in navigator) {
             navigator.serviceWorker.register("sw.js");
         }
+        function sendTokenToSW(token) {
+            navigator.serviceWorker.ready.then(reg => {
+                if (reg.active) reg.active.postMessage({ type: "auth_token", token: token });
+            });
+        }
     </script>
 </head>
 <body>

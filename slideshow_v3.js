@@ -5,7 +5,6 @@ let lastTransitionTime = Date.now();
 let pollQueue = [];
 let pollInProgress = false;
 
-
 // ---- IndexedDB helpers ----
 const DB_NAME = 'photos_db';
 const DB_VERSION = 2;
@@ -143,7 +142,6 @@ async function processQueue() {
     pollInProgress = true;
     const { token, sessionId } = pollQueue[0];
 
-    // Poll quickly for first data
     let allItems = [];
     let nextPageToken = null;
 
@@ -154,12 +152,10 @@ async function processQueue() {
         const data = await res.json();
         if (data.mediaItems) allItems.push(...data.mediaItems);
         nextPageToken = data.nextPageToken;
-        if (nextPageToken) continue; // keep fetching pages immediately
-        break; // no more pages — we have all data
+        if (!nextPageToken) break;
     }
 
     if (allItems.length === 0) {
-        // No data yet — poll again quickly
         pollInProgress = false;
         setTimeout(() => { pollInProgress = false; processQueue(); }, 1000);
         return;
@@ -184,115 +180,51 @@ async function processQueue() {
     if (pollQueue.length > 0) processQueue();
 }
 
-// ---- Prefetch queue: 10 pre-loaded photos, shown in order ----
-const prefetchQueue = [];
-let prefetchToken = null;
-let prefetchWorking = false;
+// ---- Slideshow queue: keep a random order, refill as we go ----
+const slideQueue = [];
 
-async function refillQueue(token) {
-    prefetchToken = token;
-    if (prefetchWorking) return;
-    prefetchWorking = true;
-    
-    // Pick random photos not already in the queue
-    const usedUrls = new Set(prefetchQueue.map(p => p.baseUrl));
-    outer:
-    while (prefetchQueue.length < 10 && allPhotos.length > 0) {
+function refillQueue() {
+    const usedUrls = new Set(slideQueue.map(p => p.baseUrl));
+    while (slideQueue.length < 10 && allPhotos.length > 0) {
+        let found = false;
         for (let tries = 0; tries < 30; tries++) {
             const pick = allPhotos[Math.floor(Math.random() * allPhotos.length)];
             if (!usedUrls.has(pick.baseUrl)) {
-                prefetchQueue.push(pick);
+                slideQueue.push(pick);
                 usedUrls.add(pick.baseUrl);
-                continue outer;
+                found = true;
+                break;
             }
         }
-        break; // couldn't find any unused after 30 tries
+        if (!found) break;
     }
-    
-    // Fetch one unloaded item
-    for (const item of prefetchQueue) {
-        if (prefetchBlobs.has(item.baseUrl)) continue;
-        try {
-            const resp = await fetch(item.baseUrl + '=w1920-h1080');
-            if (!resp.ok) throw new Error();
-            const blob = await resp.blob();
-            prefetchBlobs.set(item.baseUrl, blob);
-            break;
-        } catch (e) {
-            const idx = prefetchQueue.indexOf(item);
-            if (idx >= 0) prefetchQueue.splice(idx, 1);
-        }
-    }
-    prefetchWorking = false;
-    
-    if (prefetchQueue.length < 10) refillQueue(token);
 }
-// ---- End prefetch ----
-
-
 
 function startSlideshow(token) {
     document.getElementById('slideshow').style.display = 'block';
     document.getElementById('add-btn').style.display = 'block';
-    let showingImg1 = true;
+    let idx = Math.floor(Math.random() * allPhotos.length), showingImg1 = true;
     const img1 = document.getElementById('img1'), img2 = document.getElementById('img2');
     const bg1 = document.getElementById('bg1'), bg2 = document.getElementById('bg2');
 
     document.getElementById('heartbeat').innerText = allPhotos.length;
-    refillQueue(token);
-
-
-    let nextBlob = null;  // pre-loaded blob for the next slide
-    let nextItem = null;
-
-    async function prepareNext() {
-        const tryIdx = Math.floor(Math.random() * allPhotos.length);
-        const candidate = allPhotos[tryIdx];
-        let blob = getPrefetched(candidate.baseUrl);
-        if (!blob) {
-            try {
-                const resp = await fetch(candidate.baseUrl + '=w1920-h1080', {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                if (!resp.ok) throw new Error();
-                blob = await resp.blob();
-            } catch (e) {
-                return;
-            }
-        }
-        nextBlob = blob;
-        nextItem = candidate;
-    }
 
     async function next() {
         if (allPhotos.length === 0) return;
 
-        const hb = document.getElementById('heartbeat');
-        hb.innerText = allPhotos.length;
+        setTimeout(next, 5000);
+        refillQueue();
 
-        // Show the blob that was prepared during the previous slide
-        let blob = nextBlob;
-        let item = nextItem;
-        nextBlob = null;
-        nextItem = null;
-
-        // fallback if first slide or prepareNext failed
-        if (!blob || !item) {
-            item = allPhotos[Math.floor(Math.random() * allPhotos.length)];
-            try {
-                const resp = await fetch(item.baseUrl + '=w1920-h1080');
-                if (!resp.ok) throw new Error();
-                blob = await resp.blob();
-            } catch (e) {
-                // schedule next attempt ASAP
-                setTimeout(next, 500);
-                return;
-            }
-        }
-
-        const objectUrl = URL.createObjectURL(blob);
+        const item = slideQueue.length > 0 ? slideQueue.shift() : allPhotos[Math.floor(Math.random() * allPhotos.length)];
+        const url = item.baseUrl + '=w1920-h1080';
+        let objectUrl = null;
 
         try {
+            const resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const blob = await resp.blob();
+            objectUrl = URL.createObjectURL(blob);
+
             const nextImg = showingImg1 ? img2 : img1;
             const currentImg = showingImg1 ? img1 : img2;
             const nextBg = showingImg1 ? bg2 : bg1;
@@ -307,8 +239,8 @@ function startSlideshow(token) {
             nextBg.style.transform = 'scale(1)';
             void nextImg.offsetHeight;
 
-            nextImg.src = imageUrl;
-            nextBg.src = imageUrl;
+            nextImg.src = objectUrl;
+            nextBg.src = objectUrl;
 
             nextImg.style.transition = 'transform 5s ease-out, opacity 2s';
             nextImg.style.transform = 'scale(1.05)';
@@ -319,32 +251,18 @@ function startSlideshow(token) {
             currentImg.style.opacity = 0;
             currentBg.style.opacity = 0;
 
-
+            setTimeout(() => {
+                if (currentImg.src.startsWith('blob:')) URL.revokeObjectURL(currentImg.src);
+                if (currentBg.src.startsWith('blob:')) URL.revokeObjectURL(currentBg.src);
+            }, 2200);
 
             showingImg1 = !showingImg1;
-            idx = Math.floor(Math.random() * allPhotos.length);
-
             lastTransitionTime = Date.now();
-
-            // Prepare the next slide's blob in background while current slide is showing
-            refillQueue(token);
-
-
-            setTimeout(next, 5000);
         } catch (e) {
-            console.error(e);
-            idx = Math.floor(Math.random() * allPhotos.length);
+            console.error('Slide error, skipping');
             if (objectUrl) URL.revokeObjectURL(objectUrl);
-            setTimeout(next, 1000);
         }
     }
 
     next();
 }
-
-
-
-
-
-
-
