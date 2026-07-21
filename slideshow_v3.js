@@ -228,8 +228,29 @@ function startSlideshow(token) {
 
     document.getElementById('heartbeat').innerText = allPhotos.length;
     ensurePrefetch(token);
+            prepareNext();
 
-    let slideTimer = null;
+    let nextBlob = null;  // pre-loaded blob for the next slide
+    let nextItem = null;
+
+    async function prepareNext() {
+        const tryIdx = Math.floor(Math.random() * allPhotos.length);
+        const candidate = allPhotos[tryIdx];
+        let blob = getPrefetched(candidate.baseUrl);
+        if (!blob) {
+            try {
+                const resp = await fetch(candidate.baseUrl + '=w1920-h1080', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                if (!resp.ok) throw new Error();
+                blob = await resp.blob();
+            } catch (e) {
+                return;
+            }
+        }
+        nextBlob = blob;
+        nextItem = candidate;
+    }
 
     async function next() {
         if (allPhotos.length === 0) return;
@@ -237,27 +258,29 @@ function startSlideshow(token) {
         const hb = document.getElementById('heartbeat');
         hb.innerText = allPhotos.length;
 
-        // Schedule next slide exactly 5s from now (guaranteed)
-        slideTimer = setTimeout(next, 5000);
+        // Show the blob that was prepared during the previous slide
+        let blob = nextBlob;
+        let item = nextItem;
+        nextBlob = null;
+        nextItem = null;
 
-        const item = allPhotos[idx];
-        let objectUrl = null;
-        let blob = getPrefetched(item.baseUrl);
-
-        if (!blob) {
+        // fallback if first slide or prepareNext failed
+        if (!blob || !item) {
+            item = allPhotos[Math.floor(Math.random() * allPhotos.length)];
             try {
                 const resp = await fetch(item.baseUrl + '=w1920-h1080', {
                     headers: { 'Authorization': 'Bearer ' + token }
                 });
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                if (!resp.ok) throw new Error();
                 blob = await resp.blob();
             } catch (e) {
-                idx = Math.floor(Math.random() * allPhotos.length);
-                return; // next slide will pick another photo
+                // schedule next attempt ASAP
+                setTimeout(next, 500);
+                return;
             }
         }
 
-        objectUrl = URL.createObjectURL(blob);
+        const objectUrl = URL.createObjectURL(blob);
 
         try {
             const nextImg = showingImg1 ? img2 : img1;
@@ -265,7 +288,6 @@ function startSlideshow(token) {
             const nextBg = showingImg1 ? bg2 : bg1;
             const currentBg = showingImg1 ? bg1 : bg2;
 
-            // Reset transform so Ken Burns always fires
             const origins = ['0% 0%', '100% 0%', '0% 100%', '100% 100%', '50% 50%'];
             const origin = origins[Math.floor(Math.random() * origins.length)];
             nextImg.style.transition = 'none';
@@ -297,11 +319,16 @@ function startSlideshow(token) {
 
             lastTransitionTime = Date.now();
 
+            // Prepare the next slide's blob in background while current slide is showing
             ensurePrefetch(token);
+            prepareNext();
+            prepareNext();
+            setTimeout(next, 5000);
         } catch (e) {
             console.error(e);
             idx = Math.floor(Math.random() * allPhotos.length);
             if (objectUrl) URL.revokeObjectURL(objectUrl);
+            setTimeout(next, 1000);
         }
     }
 
