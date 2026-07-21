@@ -180,7 +180,7 @@ async function processQueue() {
     if (pollQueue.length > 0) processQueue();
 }
 
-// ---- Slideshow queue: keep a random order, refill as we go ----
+// ---- Slideshow queue: keep 10 photos in random order ----
 const slideQueue = [];
 
 function refillQueue() {
@@ -203,7 +203,7 @@ function refillQueue() {
 function startSlideshow(token) {
     document.getElementById('slideshow').style.display = 'block';
     document.getElementById('add-btn').style.display = 'block';
-    let idx = Math.floor(Math.random() * allPhotos.length), showingImg1 = true;
+    let showingImg1 = true;
     const img1 = document.getElementById('img1'), img2 = document.getElementById('img2');
     const bg1 = document.getElementById('bg1'), bg2 = document.getElementById('bg2');
 
