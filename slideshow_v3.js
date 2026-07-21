@@ -5,6 +5,15 @@ let lastTransitionTime = Date.now();
 let pollQueue = [];
 let pollInProgress = false;
 
+function updateAuth(token) {
+    globalToken = token;
+    if (window._swReg && window._swReg.active) {
+        window._swReg.active.postMessage({ type: "auth_token", token: token });
+    } else {
+        window._pendingToken = token;
+    }
+}
+
 // ---- IndexedDB helpers ----
 const DB_NAME = 'photos_db';
 const DB_VERSION = 2;
@@ -65,7 +74,7 @@ async function loadFromStorage() {
     const token = await dbGet('token');
     if (saved && token) {
         allPhotos = saved;
-        globalToken = token;
+        updateAuth(token);
         return true;
     }
     return false;
@@ -91,7 +100,7 @@ document.getElementById('login-btn').onclick = function() {
         scope: 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly',
         callback: async (res) => {
             if (res.access_token) {
-                globalToken = res.access_token;
+                updateAuth(res.access_token);
                 await dbPut('token', res.access_token);
                 const session = await fetch('https://photospicker.googleapis.com/v1/sessions', {
                     method: 'POST',
@@ -220,7 +229,7 @@ function startSlideshow(token) {
         let objectUrl = null;
 
         try {
-            const resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+            const resp = await fetch(url);
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const blob = await resp.blob();
             objectUrl = URL.createObjectURL(blob);
@@ -266,3 +275,4 @@ function startSlideshow(token) {
 
     next();
 }
+

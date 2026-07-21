@@ -9,6 +9,13 @@
     <script>
         if ("serviceWorker" in navigator) {
             navigator.serviceWorker.register("sw.js");
+            navigator.serviceWorker.ready.then(reg => {
+                window._swReg = reg;
+                if (window._pendingToken) {
+                    reg.active.postMessage({ type: "auth_token", token: window._pendingToken });
+                    window._pendingToken = null;
+                }
+            });
         }
         function sendTokenToSW(token) {
             navigator.serviceWorker.ready.then(reg => {
@@ -38,6 +45,7 @@
     </script>
 </body>
 </html>
+
 
 
 
