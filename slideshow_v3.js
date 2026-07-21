@@ -3,7 +3,6 @@ let allPhotos = [];
 let globalToken = null;
 let pollInterval = null;
 let lastTransitionTime = Date.now();
-let pollGeneration = 0;
 let pollInProgress = false;
 
 // ---- IndexedDB helpers ----
@@ -133,7 +132,6 @@ async function addMorePhotos() {
 
 async function pollPhotos(token, sessionId) {
     if (pollInterval) clearInterval(pollInterval);
-    const gen = ++pollGeneration;
     
     pollInterval = setInterval(async () => {
         if (pollInProgress) return;
@@ -150,9 +148,6 @@ async function pollPhotos(token, sessionId) {
             if (data.mediaItems) allItems.push(...data.mediaItems);
             nextPageToken = data.nextPageToken;
         } while (nextPageToken);
-
-        // Ignore stale responses
-        if (gen !== pollGeneration) { pollInProgress = false; return; }
 
         if (allItems.length > 0) {
             const newItems = allItems.map(p => ({
@@ -236,4 +231,5 @@ function startSlideshow(token) {
 
     next();
 }
+
 
