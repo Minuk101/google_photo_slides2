@@ -786,7 +786,7 @@ async function loadFromStorage() {
 }
 
 async function openPicker() {
-    const popup = window.open('about:blank', '_blank');
+    const popup = window.open('about:blank', 'google-photos-picker');
     requestPersistentStorage();
 
     try {
@@ -800,9 +800,14 @@ async function openPicker() {
         const pickerUri = session.pickerUri.replace(/\/$/, '') + '/autoclose';
 
         if (popup) {
+            popup.focus();
             popup.location.replace(pickerUri);
+            setTimeout(() => {
+                if (!popup.closed) popup.focus();
+            }, 100);
         } else {
-            window.open(pickerUri, '_blank');
+            const pickerWindow = window.open(pickerUri, 'google-photos-picker');
+            if (pickerWindow) pickerWindow.focus();
         }
 
         document.getElementById('login-btn').style.display = 'none';
