@@ -238,17 +238,6 @@ function startSlideshow(token) {
             }
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const blob = await resp.blob();
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 3000);
-                try {
-                    const resp = await fetch(item.baseUrl + '=w1920-h1080', { 
-                        headers: { 'Authorization': 'Bearer ' + token },
-                        signal: controller.signal 
-                    });
-                    clearTimeout(timeoutId);
-                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                    return await resp.blob();
-
             objectUrl = URL.createObjectURL(blob);
 
             const nextImg = showingImg1 ? img2 : img1;
