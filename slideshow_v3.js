@@ -56,9 +56,7 @@ async function dbClear() {
     });
 }
 
-// ---- Blob cache (IndexedDB, survives URL expiry) ----
-let blobCache = new Map();  // in-memory LRU: baseUrl -> Blob
-
+// ---- Blob cache (IndexedDB only — no memory overhead) ----
 async function cacheBlob(baseUrl, blob) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
@@ -70,18 +68,11 @@ async function cacheBlob(baseUrl, blob) {
 }
 
 async function getBlob(baseUrl) {
-    // Check memory first
-    if (blobCache.has(baseUrl)) return blobCache.get(baseUrl);
-    // Fall back to IndexedDB
     const db = await openDB();
     return new Promise((resolve) => {
         const tx = db.transaction('blobs', 'readonly');
         const req = tx.objectStore('blobs').get(baseUrl);
-        req.onsuccess = () => {
-            const blob = req.result ? req.result.blob : null;
-            if (blob) blobCache.set(baseUrl, blob);
-            resolve(blob);
-        };
+        req.onsuccess = () => resolve(req.result ? req.result.blob : null);
         req.onerror = () => resolve(null);
     });
 }
@@ -326,3 +317,5 @@ function startSlideshow(token) {
 
     next();
 }
+
+
