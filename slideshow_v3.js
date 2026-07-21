@@ -381,7 +381,8 @@ function updateCacheStatus() {
         cacheNeedsAuthorization = false;
         bulkPrefetchPausedForAuth = false;
         status.dataset.state = 'complete';
-        status.textContent = `로컬 저장 완료 ${completed}/${total}`;
+        status.textContent = '';
+        status.style.display = 'none';
     } else if (cacheNeedsAuthorization) {
         status.dataset.state = 'action';
         status.textContent = `로컬 저장 ${completed}/${total} · 눌러서 계속`;
@@ -563,7 +564,6 @@ async function mergePhotos(items) {
 
     if (addedCount > 0 || changed) {
         await dbPut('photos', allPhotos);
-        updatePhotoCount();
         if (addedCount > 0 && !slideshowStarted) startSlideshow();
         if (addedCount > 0) refillQueue();
         scheduleBulkPrefetch();
@@ -626,10 +626,6 @@ async function processQueue() {
 // ---- End Picker sessions ----
 
 // ---- Slideshow ----
-function updatePhotoCount() {
-    document.getElementById('heartbeat').innerText = allPhotos.length;
-}
-
 function shuffle(items) {
     for (let index = items.length - 1; index > 0; index--) {
         const randomIndex = Math.floor(Math.random() * (index + 1));
@@ -755,7 +751,6 @@ function startSlideshow() {
     slideshowStarted = true;
     document.getElementById('slideshow').style.display = 'block';
     document.getElementById('add-btn').style.display = 'block';
-    updatePhotoCount();
     refillQueue();
     scheduleBulkPrefetch();
     pumpSlidePrefetch();
@@ -771,7 +766,6 @@ async function loadFromStorage() {
         allPhotos = saved.map(normalizePhoto).filter(Boolean);
         if (allPhotos.length === 0) return false;
 
-        updatePhotoCount();
         return true;
     } catch (error) {
         console.error('Could not restore photos:', error);
@@ -787,7 +781,8 @@ async function openPicker() {
         if (!token) return;
 
         const session = await createPickerSession();
-        window.open(session.pickerUri, '_blank');
+        const pickerUri = session.pickerUri.replace(/\/$/, '') + '/autoclose';
+        window.open(pickerUri, '_blank');
         document.getElementById('login-btn').style.display = 'none';
         document.getElementById('add-btn').style.display = 'block';
         queuePickerSession(session);
