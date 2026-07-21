@@ -60,10 +60,15 @@ setInterval(() => {
 }, 10000);
 
 async function loadFromStorage() {
-    const urls = await dbGet('photos');
+    const saved = await dbGet('photos');
     const token = await dbGet('token');
-    if (urls && token) {
-        allPhotos = urls.map(url => ({ baseUrl: url }));
+    if (saved && token) {
+        // Handle old format (string[]) and new format ({id, baseUrl}[])
+        if (typeof saved[0] === 'string') {
+            allPhotos = saved.map(url => ({ id: null, baseUrl: url }));
+        } else {
+            allPhotos = saved.map(p => ({ id: p.id, baseUrl: p.baseUrl }));
+        }
         globalToken = token;
         return true;
     }
@@ -146,7 +151,7 @@ async function pollPhotos(token, sessionId) {
         } while (nextPageToken);
 
         if (allItems.length > 0) {
-            const newUrls = allItems.map(p => p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl).filter(url => url);
+            const newUrls = allItems.map(p => p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl).filter(url => url); 
             const uniqueUrls = new Set([...allPhotos.map(p => p.baseUrl), ...newUrls]);
             allPhotos = Array.from(uniqueUrls).map(url => ({ baseUrl: url }));
             
@@ -224,4 +229,7 @@ function startSlideshow(token) {
 
     next();
 }
+
+
+
 
