@@ -45,7 +45,6 @@ let bulkPrefetchActive = 0;
 let bulkPrefetchPausedForAuth = false;
 let bulkPrefetchRetryTimer = null;
 let cacheNeedsAuthorization = false;
-let pendingPickerSession = null;
 
 let lastTransitionTime = Date.now();
 let databasePromise = null;
@@ -780,70 +779,20 @@ async function loadFromStorage() {
     }
 }
 
-function getPickerUri(session) {
-    return session.pickerUri.replace(/\/$/, '') + '/autoclose';
-}
-
-function showPickerLaunchButton(session) {
-    pendingPickerSession = session;
-    const button = document.getElementById('picker-launch-btn');
-    button.textContent = '사진 선택 창 열기';
-    button.style.display = 'block';
-    button.focus();
-    document.getElementById('login-btn').style.display = 'none';
-    document.getElementById('add-btn').style.display = 'none';
-}
-
-function launchPickerSession(session, existingWindow = null) {
-    const pickerUri = getPickerUri(session);
-    const pickerWindow = existingWindow || window.open(
-        pickerUri,
-        'google-photos-picker'
-    );
-
-    if (!pickerWindow) return false;
-    if (existingWindow) pickerWindow.location.replace(pickerUri);
-    pickerWindow.focus();
-
-    pendingPickerSession = null;
-    document.getElementById('picker-launch-btn').style.display = 'none';
-    document.getElementById('login-btn').style.display = 'none';
-    document.getElementById('add-btn').style.display = 'block';
-    queuePickerSession(session);
-    return true;
-}
-
-function launchPendingPicker(event) {
-    event.stopPropagation();
-    if (!pendingPickerSession) return;
-
-    if (!launchPickerSession(pendingPickerSession)) {
-        document.getElementById('picker-launch-btn').textContent =
-            '팝업 허용 후 다시 누르기';
-    }
-}
-
 async function openPicker() {
-    const needsAuthorization = !hasUsableToken();
-    const popup = needsAuthorization
-        ? null
-        : window.open('about:blank', 'google-photos-picker');
     requestPersistentStorage();
 
     try {
         const token = await requestAccessToken();
-        if (!token) {
-            if (popup) popup.close();
-            return;
-        }
+        if (!token) return;
 
         const session = await createPickerSession();
-        if (!popup || !launchPickerSession(session, popup)) {
-            showPickerLaunchButton(session);
-        }
+        window.open(session.pickerUri, '_blank');
+        document.getElementById('login-btn').style.display = 'none';
+        document.getElementById('add-btn').style.display = 'block';
+        queuePickerSession(session);
     } catch (error) {
         console.error('Could not open Google Photos Picker:', error);
-        if (popup) popup.close();
     }
 }
 
@@ -894,7 +843,6 @@ async function resetPhotos() {
 }
 
 document.getElementById('login-btn').onclick = openPicker;
-document.getElementById('picker-launch-btn').onclick = launchPendingPicker;
 document.getElementById('cache-status').onclick = resumeCacheDownload;
 
 window.onload = async () => {
