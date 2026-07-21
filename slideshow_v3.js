@@ -184,7 +184,7 @@ async function processQueue() {
     processQueue();
 }
 
-// GPS test
+// Minimal EXIF GPS reader (no external library needed)
 async function testGPS() {
     const item = allPhotos[0];
     if (!item) { alert("No photos loaded"); return; }
@@ -192,14 +192,78 @@ async function testGPS() {
     try {
         const url = item.baseUrl + '=d';
         const resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + globalToken } });
-        const blob = await resp.blob();
+        const buf = await resp.arrayBuffer();
+        const dv = new DataView(buf);
         
-        const gps = await exifr.gps(blob);
-        if (gps) {
-            alert("Lat: " + gps.latitude + "\nLng: " + gps.longitude + "\n\nGPS data exists!");
-        } else {
-            alert("No GPS data found.\n\nGoogle Photos may have stripped the EXIF.");
+        // Find EXIF header
+        if (dv.getUint16(0) !== 0xFFD8) { alert("Not a JPEG"); return; }
+        
+        let offset = 2;
+        while (offset < buf.byteLength) {
+            if (dv.getUint16(offset) === 0xFFE1) {
+                const exifLen = dv.getUint16(offset + 2);
+                const exifStart = offset + 4;
+                const tiffStart = exifStart + 6; // skip "Exif\0\0"
+                
+                const littleEndian = dv.getUint16(tiffStart) === 0x4949;
+                const ifd0Offset = dv.getUint32(tiffStart + 4, littleEndian) + tiffStart;
+                
+                // Parse IFD0 to find GPS IFD pointer (tag 0x8825)
+                let gpsIfdOffset = 0;
+                const numEntries = dv.getUint16(ifd0Offset, littleEndian);
+                for (let i = 0; i < numEntries; i++) {
+                    const entryOff = ifd0Offset + 2 + i * 12;
+                    const tag = dv.getUint16(entryOff, littleEndian);
+                    if (tag === 0x8825) {
+                        gpsIfdOffset = dv.getUint32(entryOff + 8, littleEndian) + tiffStart;
+                        break;
+                    }
+                }
+                
+                if (!gpsIfdOffset) { alert("No GPS IFD found."); return; }
+                
+                // Parse GPS IFD
+                const gpsEntries = dv.getUint16(gpsIfdOffset, littleEndian);
+                let latRef = 'N', lonRef = 'E';
+                let latData = null, lonData = null;
+                
+                for (let i = 0; i < gpsEntries; i++) {
+                    const entryOff = gpsIfdOffset + 2 + i * 12;
+                    const tag = dv.getUint16(entryOff, littleEndian);
+                    const type = dv.getUint16(entryOff + 2, littleEndian);
+                    const count = dv.getUint32(entryOff + 4, littleEndian);
+                    const valueOff = count > 1 ? dv.getUint32(entryOff + 8, littleEndian) + tiffStart : entryOff + 8;
+                    
+                    if (tag === 0x0001) { // GPSLatitudeRef
+                        latRef = String.fromCharCode(dv.getUint8(valueOff));
+                    } else if (tag === 0x0002) { // GPSLatitude
+                        latData = [dv.getUint32(valueOff, littleEndian) / dv.getUint32(valueOff + 4, littleEndian),
+                                   dv.getUint32(valueOff + 8, littleEndian) / dv.getUint32(valueOff + 12, littleEndian),
+                                   dv.getUint32(valueOff + 16, littleEndian) / dv.getUint32(valueOff + 20, littleEndian)];
+                    } else if (tag === 0x0003) { // GPSLongitudeRef
+                        lonRef = String.fromCharCode(dv.getUint8(valueOff));
+                    } else if (tag === 0x0004) { // GPSLongitude
+                        lonData = [dv.getUint32(valueOff, littleEndian) / dv.getUint32(valueOff + 4, littleEndian),
+                                   dv.getUint32(valueOff + 8, littleEndian) / dv.getUint32(valueOff + 12, littleEndian),
+                                   dv.getUint32(valueOff + 16, littleEndian) / dv.getUint32(valueOff + 20, littleEndian)];
+                    }
+                }
+                
+                if (latData && lonData) {
+                    const lat = latData[0] + latData[1]/60 + latData[2]/3600;
+                    const lon = lonData[0] + lonData[1]/60 + lonData[2]/3600;
+                    const latStr = (latRef === 'S' ? -lat : lat).toFixed(6);
+                    const lonStr = (lonRef === 'W' ? -lon : lon).toFixed(6);
+                    alert("GPS found!\nLat: " + latStr + "\nLng: " + lonStr + "\n\nOpen: https://www.openstreetmap.org/?mlat=" + latStr + "&mlon=" + lonStr);
+                    window.open("https://www.openstreetmap.org/?mlat=" + latStr + "&mlon=" + lonStr, "_blank");
+                } else {
+                    alert("No GPS coordinates in the EXIF data.");
+                }
+                return;
+            }
+            offset++;
         }
+        alert("No EXIF data found in this JPEG.");
     } catch (e) {
         alert("Error: " + e.message);
     }
@@ -265,3 +329,4 @@ function startSlideshow(token) {
 
     next();
 }
+
