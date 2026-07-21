@@ -9,3 +9,6 @@
 #add-btn:hover, #reset-btn:hover, #add-btn:active, #reset-btn:active { opacity: 1; color: white; }
 #heartbeat { position: fixed; bottom: 10px; right: 10px; font-size: 16px; color: rgba(255,255,255,0.5); z-index: 999; font-family: sans-serif; }
 
+#gps-btn { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 5px 8px; font-size: 10px; cursor: pointer; z-index: 20; background: transparent; color: rgba(255,255,255,0.3); border: none; opacity: 0.1; transition: opacity 0.3s; }
+#gps-btn:hover, #gps-btn:active { opacity: 1; color: white; }
+

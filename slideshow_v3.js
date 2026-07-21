@@ -82,6 +82,7 @@ window.onload = async () => {
         document.getElementById('login-btn').style.display = 'none';
         startSlideshow(globalToken);
         document.getElementById('add-btn').style.display = 'block';
+        document.getElementById('gps-btn').style.display = 'block';
     }
 };
 
@@ -143,7 +144,6 @@ async function processQueue() {
     pollInProgress = true;
     const { token, sessionId } = pollQueue[0];
     
-    // Poll until Picker session has data
     while (true) {
         let allItems = [];
         let nextPageToken = null;
@@ -172,21 +172,43 @@ async function processQueue() {
                 startSlideshow(token);
             }
             document.getElementById('add-btn').style.display = 'block';
+            document.getElementById('gps-btn').style.display = 'block';
             break;
         }
         
-        // Wait 3s and try again
         await new Promise(r => setTimeout(r, 3000));
     }
     
     pollQueue.shift();
     pollInProgress = false;
-    processQueue(); // Start next in queue
+    processQueue();
+}
+
+// GPS test
+async function testGPS() {
+    const item = allPhotos[0];
+    if (!item) { alert("No photos loaded"); return; }
+    
+    try {
+        const url = item.baseUrl + '=d';
+        const resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + globalToken } });
+        const blob = await resp.blob();
+        
+        const gps = await exifr.gps(blob);
+        if (gps) {
+            alert("Lat: " + gps.latitude + "\nLng: " + gps.longitude + "\n\nGPS data exists!");
+        } else {
+            alert("No GPS data found.\n\nGoogle Photos may have stripped the EXIF.");
+        }
+    } catch (e) {
+        alert("Error: " + e.message);
+    }
 }
 
 function startSlideshow(token) {
     document.getElementById('slideshow').style.display = 'block';
     document.getElementById('add-btn').style.display = 'block';
+    document.getElementById('gps-btn').style.display = 'block';
     let idx = Math.floor(Math.random() * allPhotos.length), showingImg1 = true;
     const img1 = document.getElementById('img1'), img2 = document.getElementById('img2');
     const bg1 = document.getElementById('bg1'), bg2 = document.getElementById('bg2');
