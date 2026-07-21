@@ -261,21 +261,26 @@ function startSlideshow(token) {
             const nextBg = showingImg1 ? bg2 : bg1;
             const currentBg = showingImg1 ? bg1 : bg2;
 
+            // Reset transform before setting new image so Ken Burns always fires
+            const origins = ['0% 0%', '100% 0%', '0% 100%', '100% 100%', '50% 50%'];
+            const origin = origins[Math.floor(Math.random() * origins.length)];
+            nextImg.style.transition = 'none';
+            nextImg.style.transform = 'scale(1)';
+            nextImg.style.transformOrigin = origin;
+            nextBg.style.transition = 'none';
+            nextBg.style.transform = 'scale(1)';
+            void nextImg.offsetHeight;
+
             nextImg.src = objectUrl;
             nextBg.src = objectUrl;
 
-            // Ken Burns: every photo gets a slow pan + zoom
-            const origins = ['0% 0%', '100% 0%', '0% 100%', '100% 100%', '50% 50%'];
-            const origin = origins[Math.floor(Math.random() * origins.length)];
-            nextImg.style.transformOrigin = origin;
-            nextImg.style.transform = 'scale(1.05)';
             nextImg.style.transition = 'transform 5s ease-out, opacity 2s';
+            nextImg.style.transform = 'scale(1.05)';
             nextImg.style.opacity = 1;
+            nextBg.style.transition = 'opacity 2s';
             nextBg.style.opacity = 1;
 
             currentImg.style.opacity = 0;
-            
-            
             currentBg.style.opacity = 0;
 
             setTimeout(() => {
@@ -300,6 +305,7 @@ function startSlideshow(token) {
 
     next();
 }
+
 
 
 
