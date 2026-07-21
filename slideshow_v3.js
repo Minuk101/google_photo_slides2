@@ -189,41 +189,20 @@ async function processQueue() {
     if (pollQueue.length > 0) processQueue();
 }
 
-// ---- Slideshow queue: keep 10 photos in random order with prefetch ----
+// ---- Slideshow queue ----
 const slideQueue = [];
 
-async function refillQueue() {
+function refillQueue() {
     const usedUrls = new Set(slideQueue.map(p => p.baseUrl));
-    
-    // ť�� 10���� ä��鼭 prefetch
     while (slideQueue.length < 10 && allPhotos.length > 0) {
-        let found = false;
         for (let tries = 0; tries < 30; tries++) {
             const pick = allPhotos[Math.floor(Math.random() * allPhotos.length)];
             if (!usedUrls.has(pick.baseUrl)) {
-                // blob �̸� �޾ƿ���
-                try {
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 3000);
-                    const resp = await fetch(pick.baseUrl + '=w1920-h1080', { 
-                        headers: { 'Authorization': 'Bearer ' + token },
-                        signal: controller.signal 
-                    });
-                    clearTimeout(timeoutId);
-                    
-                    if (resp.ok) {
-                        const blob = await resp.blob();
-                        slideQueue.push({ ...pick, blob });
-                        usedUrls.add(pick.baseUrl);
-                        found = true;
-                    }
-                } catch (e) {
-                    // prefetch �����ϸ� ť�� ���� ����
-                }
+                slideQueue.push(pick);
+                usedUrls.add(pick.baseUrl);
                 break;
             }
         }
-        if (!found) break;
     }
 }
 
@@ -240,14 +219,25 @@ function startSlideshow(token) {
         if (allPhotos.length === 0) return;
 
         refillQueue();
-        prefetchFirst(); // 백그라운드 프리페치
 
         const item = slideQueue.length > 0 ? slideQueue.shift() : allPhotos[Math.floor(Math.random() * allPhotos.length)];
         let objectUrl = null;
 
         try {
             // prefetch�� blob�� ������ ���, ������ fallback
-            const blob = item.blob || await (async () => {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 3000);
+            let resp;
+            try {
+                resp = await fetch(item.baseUrl + '=w1920-h1080', { 
+                    headers: { 'Authorization': 'Bearer ' + token },
+                    signal: controller.signal 
+                });
+            } finally {
+                clearTimeout(timeoutId);
+            }
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const blob = await resp.blob();
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 3000);
                 try {
@@ -258,10 +248,7 @@ function startSlideshow(token) {
                     clearTimeout(timeoutId);
                     if (!resp.ok) throw new Error('HTTP ' + resp.status);
                     return await resp.blob();
-                } finally {
-                    clearTimeout(timeoutId);
-                }
-            })();
+
             objectUrl = URL.createObjectURL(blob);
 
             const nextImg = showingImg1 ? img2 : img1;
