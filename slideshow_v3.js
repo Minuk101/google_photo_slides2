@@ -240,6 +240,7 @@ function startSlideshow(token) {
         if (allPhotos.length === 0) return;
 
         refillQueue();
+        prefetchFirst(); // 백그라운드 프리페치
 
         const item = slideQueue.length > 0 ? slideQueue.shift() : allPhotos[Math.floor(Math.random() * allPhotos.length)];
         let objectUrl = null;
