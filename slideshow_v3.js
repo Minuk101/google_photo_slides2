@@ -4,7 +4,7 @@ let globalToken = null;
 let lastTransitionTime = Date.now();
 let pollQueue = [];
 let pollInProgress = false;
-let slideInterval = 5000;
+
 
 // ---- IndexedDB helpers ----
 const DB_NAME = 'photos_db';
@@ -83,8 +83,6 @@ window.onload = async () => {
         document.getElementById('login-btn').style.display = 'none';
         startSlideshow(globalToken);
         document.getElementById('add-btn').style.display = 'block';
-    document.getElementById('speed-down').style.display = 'block';
-    document.getElementById('speed-up').style.display = 'block';
     }
 };
 
@@ -219,18 +217,9 @@ function getPrefetched(baseUrl) {
 }
 // ---- End prefetch ----
 
-function changeSpeed(delta) {
-    const hb = document.getElementById('heartbeat');
-    slideInterval = Math.max(3000, Math.min(15000, slideInterval + delta));
-    hb.innerText = allPhotos.length + ' (' + (slideInterval / 1000) + 's)';
-}
 
-document.getElementById('speed-down').onclick = () => changeSpeed(-1000);
-document.getElementById('speed-up').onclick = () => changeSpeed(1000);
 
 function startSlideshow(token) {
-    document.getElementById('speed-down').style.display = 'block';
-    document.getElementById('speed-up').style.display = 'block';
     document.getElementById('slideshow').style.display = 'block';
     document.getElementById('add-btn').style.display = 'block';
     let idx = Math.floor(Math.random() * allPhotos.length), showingImg1 = true;
@@ -244,7 +233,7 @@ function startSlideshow(token) {
         if (allPhotos.length === 0) return;
 
         const hb = document.getElementById('heartbeat');
-        hb.innerText = allPhotos.length + ' (' + (slideInterval / 1000) + 's)';
+        hb.innerText = allPhotos.length;
 
         const item = allPhotos[idx];
         let objectUrl = null;
@@ -280,7 +269,7 @@ function startSlideshow(token) {
             const origin = origins[Math.floor(Math.random() * origins.length)];
             nextImg.style.transformOrigin = origin;
             nextImg.style.transform = 'scale(1.05)';
-            nextImg.style.transition = 'transform ' + (slideInterval / 1000) + 's ease-out, opacity 2s';
+            nextImg.style.transition = 'transform 5s ease-out, opacity 2s';
             nextImg.style.opacity = 1;
             nextBg.style.opacity = 1;
 
@@ -300,7 +289,7 @@ function startSlideshow(token) {
             lastTransitionTime = Date.now();
 
             ensurePrefetch(token);
-            setTimeout(next, slideInterval);
+            setTimeout(next, 5000);
         } catch (e) {
             console.error(e);
             idx = Math.floor(Math.random() * allPhotos.length);
@@ -311,5 +300,7 @@ function startSlideshow(token) {
 
     next();
 }
+
+
 
 
