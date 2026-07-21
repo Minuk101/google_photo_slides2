@@ -108,6 +108,7 @@ document.getElementById('login-btn').onclick = function() {
 };
 
 async function addMorePhotos() {
+    pollInProgress = false;
     if (!globalToken) {
         document.getElementById('login-btn').style.display = 'block';
         document.getElementById('login-btn').click();
@@ -235,3 +236,4 @@ function startSlideshow(token) {
 
     next();
 }
+
