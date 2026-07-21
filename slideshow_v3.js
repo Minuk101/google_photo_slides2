@@ -143,21 +143,25 @@ async function processQueue() {
     pollInProgress = true;
     const { token, sessionId } = pollQueue[0];
 
+    // Poll quickly for first data
     let allItems = [];
     let nextPageToken = null;
 
-    do {
+    while (true) {
         const url = 'https://photospicker.googleapis.com/v1/mediaItems?sessionId=' + sessionId + (nextPageToken ? '&pageToken=' + nextPageToken : '');
         const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
         if (res.status !== 200) break;
         const data = await res.json();
         if (data.mediaItems) allItems.push(...data.mediaItems);
         nextPageToken = data.nextPageToken;
-    } while (nextPageToken);
+        if (nextPageToken) continue; // keep fetching pages immediately
+        break; // no more pages — we have all data
+    }
 
     if (allItems.length === 0) {
+        // No data yet — poll again quickly
         pollInProgress = false;
-        setTimeout(() => { pollInProgress = false; processQueue(); }, 3000);
+        setTimeout(() => { pollInProgress = false; processQueue(); }, 1000);
         return;
     }
 
