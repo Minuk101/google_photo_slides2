@@ -274,15 +274,18 @@ function startSlideshow(token) {
             nextImg.src = objectUrl;
             nextBg.src = objectUrl;
 
-            // Ken Burns: random subtle zoom
-            const zoom = Math.random() > 0.5 ? 'scale(1.08)' : 'scale(1)';
-            nextImg.style.transform = zoom;
+            // Ken Burns: every photo gets a slow pan + zoom
+            const origins = ['0% 0%', '100% 0%', '0% 100%', '100% 100%', '50% 50%'];
+            const origin = origins[Math.floor(Math.random() * origins.length)];
+            nextImg.style.transformOrigin = origin;
+            nextImg.style.transform = 'scale(1.15)';
             nextImg.style.transition = 'transform ' + (slideInterval / 1000) + 's ease-out, opacity 2s';
             nextImg.style.opacity = 1;
             nextBg.style.opacity = 1;
 
             currentImg.style.opacity = 0;
             currentImg.style.transform = 'scale(1)';
+            currentImg.style.transformOrigin = '50% 50%';
             currentBg.style.opacity = 0;
 
             setTimeout(() => {
@@ -307,3 +310,4 @@ function startSlideshow(token) {
 
     next();
 }
+
