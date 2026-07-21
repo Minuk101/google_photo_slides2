@@ -3,39 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <title>Google Photos Slideshow</title>
-    <link rel="stylesheet" href="style.css?v=8">
+    <link rel="stylesheet" href="style.css?v=9">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link rel="manifest" href="manifest.json">
     <script>
         if ("serviceWorker" in navigator) {
             navigator.serviceWorker.register("sw.js");
-            navigator.serviceWorker.ready.then(reg => {
-                window._swReg = reg;
-                if (window._pendingToken) {
-                    reg.active.postMessage({ type: "auth_token", token: window._pendingToken });
-                    window._pendingToken = null;
-                }
-            });
-        }
-        function sendTokenToSW(token) {
-            navigator.serviceWorker.ready.then(reg => {
-                if (reg.active) reg.active.postMessage({ type: "auth_token", token: token });
-            });
         }
     </script>
 </head>
 <body>
     <button id="login-btn">로그인하고 슬라이드 시작</button>
-    <button id="add-btn" style="display:none;" onclick="addMorePhotos()">사진 더 추가하기</button>
+    <button id="add-btn" onclick="addMorePhotos()">사진 더 추가하기</button>
     <button id="reset-btn" onclick="resetPhotos()">초기화</button>
     <div id="slideshow" style="display:none;">
-        <img id="bg1" class="bg-layer" src="" style="opacity: 0; transition: opacity 2s;">
-        <img id="bg2" class="bg-layer" src="" style="opacity: 0; transition: opacity 2s;">
-        <img id="img1" class="main-img" style="opacity: 0; transition: opacity 2s;">
-        <img id="img2" class="main-img" style="opacity: 0; transition: opacity 2s;">
+        <img id="bg1" class="bg-layer">
+        <img id="bg2" class="bg-layer">
+        <img id="img1" class="main-img">
+        <img id="img2" class="main-img">
     </div>
     <div id="heartbeat">0</div>
-    <script src="slideshow_v3.js?v=44"></script>
+    <script src="slideshow_v3.js?v=46"></script>
     <script>
         document.addEventListener("click", () => {
             if (!document.fullscreenElement && document.getElementById("slideshow").style.display !== "none") {

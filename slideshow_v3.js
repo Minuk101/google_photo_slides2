@@ -1,293 +1,828 @@
-﻿const CLIENT_ID = '232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleusercontent.com';
+const CLIENT_ID = '232709413830-gjmgctle15h91vcm1i9vtb6h5lnrk84o.apps.googleusercontent.com';
+const PHOTO_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
+const API_BASE = 'https://photospicker.googleapis.com/v1';
+
+const DB_NAME = 'photos_db';
+const DB_VERSION = 3;
+const META_STORE = 'store';
+const MEDIA_STORE = 'media';
+
+const IMAGE_SIZE = '=w1920-h1080';
+const SLIDE_INTERVAL_MS = 5000;
+const RETRY_INTERVAL_MS = 3000;
+const IMAGE_FETCH_TIMEOUT_MS = 20000;
+const API_FETCH_TIMEOUT_MS = 15000;
+const QUEUE_SIZE = 12;
+const PREFETCH_AHEAD = 4;
+const BULK_PREFETCH_CONCURRENCY = 2;
+const MAX_MEMORY_BLOBS = 5;
+const TOKEN_REFRESH_LEAD_MS = 5 * 60 * 1000;
+const DEFAULT_POLL_INTERVAL_MS = 3000;
+const DEFAULT_SESSION_TIMEOUT_MS = 10 * 60 * 1000;
+
 let allPhotos = [];
 let globalToken = null;
-let lastTransitionTime = Date.now();
-let pollQueue = [];
+let tokenExpiresAt = 0;
+let tokenClient = null;
+let tokenRequestPromise = null;
+let pendingTokenResolver = null;
+let tokenRefreshTimer = null;
+
+const pollQueue = [];
 let pollInProgress = false;
 
-function updateAuth(token) {
-    globalToken = token;
-    if (window._swReg && window._swReg.active) {
-        window._swReg.active.postMessage({ type: "auth_token", token: token });
-    } else {
-        window._pendingToken = token;
-    }
+const slideQueue = [];
+const playedPhotoKeys = new Set();
+let currentPhotoKey = null;
+let slideshowStarted = false;
+let advancing = false;
+let nextSlideTimer = null;
+
+const memoryBlobCache = new Map();
+const pendingBlobLoads = new Map();
+const bulkPrefetchQueue = [];
+const bulkPrefetchScheduled = new Set();
+const bulkPrefetchCompleted = new Set();
+let bulkPrefetchActive = 0;
+
+let lastTransitionTime = Date.now();
+
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// ---- IndexedDB helpers ----
-const DB_NAME = 'photos_db';
-const DB_VERSION = 2;
-const STORE_NAME = 'store';
+function parseDuration(value, fallback) {
+    const seconds = Number.parseFloat(String(value || '').replace(/s$/, ''));
+    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : fallback;
+}
 
+function getPhotoKey(photo) {
+    return String(photo.id || photo.baseUrl);
+}
+
+function normalizePhoto(item) {
+    const mediaFile = item.mediaFile || item;
+    const baseUrl = mediaFile && mediaFile.baseUrl;
+    if (!baseUrl) return null;
+
+    return {
+        id: String(item.id || baseUrl),
+        baseUrl,
+        mimeType: mediaFile.mimeType || item.mimeType || 'image/jpeg'
+    };
+}
+
+// ---- IndexedDB ----
 function openDB() {
     return new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, DB_VERSION);
-        req.onupgradeneeded = (e) => {
-            e.target.result.createObjectStore(STORE_NAME, { keyPath: 'id' });
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+        request.onupgradeneeded = event => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(META_STORE)) {
+                db.createObjectStore(META_STORE, { keyPath: 'id' });
+            }
+            if (!db.objectStoreNames.contains(MEDIA_STORE)) {
+                db.createObjectStore(MEDIA_STORE, { keyPath: 'id' });
+            }
         };
-        req.onsuccess = (e) => resolve(e.target.result);
-        req.onerror = (e) => reject(e.target.error);
+
+        request.onsuccess = event => resolve(event.target.result);
+        request.onerror = () => reject(request.error);
     });
 }
 
 async function dbPut(key, value) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        tx.objectStore(STORE_NAME).put({ id: key, value });
-        tx.oncomplete = () => resolve();
-        tx.onerror = (e) => reject(e.target.error);
+        const tx = db.transaction(META_STORE, 'readwrite');
+        tx.objectStore(META_STORE).put({ id: key, value });
+        tx.oncomplete = () => {
+            db.close();
+            resolve();
+        };
+        tx.onerror = () => {
+            const error = tx.error;
+            db.close();
+            reject(error);
+        };
     });
 }
 
 async function dbGet(key) {
     const db = await openDB();
-    return new Promise((resolve) => {
-        const tx = db.transaction(STORE_NAME, 'readonly');
-        const req = tx.objectStore(STORE_NAME).get(key);
-        req.onsuccess = () => resolve(req.result ? req.result.value : null);
-        req.onerror = () => resolve(null);
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(META_STORE, 'readonly');
+        const request = tx.objectStore(META_STORE).get(key);
+        let value = null;
+
+        request.onsuccess = () => {
+            value = request.result ? request.result.value : null;
+        };
+        tx.oncomplete = () => {
+            db.close();
+            resolve(value);
+        };
+        tx.onerror = () => {
+            db.close();
+            reject(tx.error);
+        };
     });
 }
 
-async function dbClear() {
+async function dbPutMedia(id, blob) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        tx.objectStore(STORE_NAME).clear();
-        tx.oncomplete = () => resolve();
-        tx.onerror = (e) => reject(e.target.error);
+        const tx = db.transaction(MEDIA_STORE, 'readwrite');
+        tx.objectStore(MEDIA_STORE).put({ id, blob });
+        tx.oncomplete = () => {
+            db.close();
+            resolve();
+        };
+        tx.onerror = () => {
+            const error = tx.error;
+            db.close();
+            reject(error);
+        };
+    });
+}
+
+async function dbGetMedia(id) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(MEDIA_STORE, 'readonly');
+        const request = tx.objectStore(MEDIA_STORE).get(id);
+        let blob = null;
+
+        request.onsuccess = () => {
+            blob = request.result ? request.result.blob : null;
+        };
+        tx.oncomplete = () => {
+            db.close();
+            resolve(blob);
+        };
+        tx.onerror = () => {
+            db.close();
+            reject(tx.error);
+        };
+    });
+}
+
+async function dbClearAll() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction([META_STORE, MEDIA_STORE], 'readwrite');
+        tx.objectStore(META_STORE).clear();
+        tx.objectStore(MEDIA_STORE).clear();
+        tx.oncomplete = () => {
+            db.close();
+            resolve();
+        };
+        tx.onerror = () => {
+            const error = tx.error;
+            db.close();
+            reject(error);
+        };
     });
 }
 // ---- End IndexedDB ----
 
-// Watchdog
-setInterval(() => {
-    if (document.getElementById('slideshow').style.display !== 'none' && Date.now() - lastTransitionTime > 60000) {
-        console.error('Slideshow stalled, reloading...');
-        location.reload();
+// ---- Authentication ----
+function hasUsableToken() {
+    return Boolean(globalToken && Date.now() < tokenExpiresAt - 30000);
+}
+
+function clearTokenRefreshTimer() {
+    if (tokenRefreshTimer) {
+        clearTimeout(tokenRefreshTimer);
+        tokenRefreshTimer = null;
     }
-}, 10000);
+}
+
+function scheduleTokenRefresh() {
+    clearTokenRefreshTimer();
+    if (!globalToken || !tokenExpiresAt) return;
+
+    const refreshIn = Math.max(
+        60000,
+        tokenExpiresAt - Date.now() - TOKEN_REFRESH_LEAD_MS
+    );
+
+    tokenRefreshTimer = setTimeout(async () => {
+        try {
+            const refreshed = await requestAccessToken(false);
+            if (refreshed) {
+                scheduleTokenRefresh();
+                return;
+            }
+        } catch (error) {
+            console.warn('Automatic token refresh failed:', error);
+        }
+
+        if (globalToken) {
+            tokenRefreshTimer = setTimeout(scheduleTokenRefresh, 5 * 60 * 1000);
+        }
+    }, refreshIn);
+}
+
+function applyToken(response) {
+    globalToken = response.access_token;
+    tokenExpiresAt = Date.now() + (Number(response.expires_in) || 3600) * 1000;
+    scheduleTokenRefresh();
+
+    if (allPhotos.length > 0) {
+        scheduleBulkPrefetch();
+        pumpSlidePrefetch();
+    }
+    if (pollQueue.length > 0) {
+        processQueue();
+    }
+}
+
+async function waitForGoogleIdentity() {
+    for (let attempt = 0; attempt < 100; attempt++) {
+        if (window.google && google.accounts && google.accounts.oauth2) return;
+        await delay(100);
+    }
+    throw new Error('Google Identity Services is not ready');
+}
+
+function initTokenClient() {
+    tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: PHOTO_SCOPE,
+        prompt: '',
+        callback: response => {
+            const resolve = pendingTokenResolver;
+            pendingTokenResolver = null;
+
+            if (response && response.access_token) {
+                applyToken(response);
+                if (resolve) resolve(response.access_token);
+            } else if (resolve) {
+                resolve(null);
+            }
+        },
+        error_callback: error => {
+            console.warn('Google authorization error:', error);
+            const resolve = pendingTokenResolver;
+            pendingTokenResolver = null;
+            if (resolve) resolve(null);
+        }
+    });
+}
+
+async function requestAccessToken(interactive) {
+    if (hasUsableToken()) return globalToken;
+    if (tokenRequestPromise) return tokenRequestPromise;
+
+    tokenRequestPromise = (async () => {
+        await waitForGoogleIdentity();
+        if (!tokenClient) initTokenClient();
+
+        return new Promise(resolve => {
+            pendingTokenResolver = resolve;
+            tokenClient.requestAccessToken(interactive ? {} : { prompt: 'none' });
+        });
+    })();
+
+    try {
+        return await tokenRequestPromise;
+    } finally {
+        tokenRequestPromise = null;
+    }
+}
+
+function authRequiredError() {
+    const error = new Error('Authentication is required');
+    error.code = 'AUTH_REQUIRED';
+    return error;
+}
+
+async function getValidToken(interactive = false) {
+    if (hasUsableToken()) return globalToken;
+    const token = await requestAccessToken(interactive);
+    if (!token) throw authRequiredError();
+    return token;
+}
+// ---- End Authentication ----
+
+// ---- API and media loading ----
+async function fetchOnce(url, init, token, timeoutMs) {
+    const controller = timeoutMs ? new AbortController() : null;
+    const headers = new Headers(init.headers || {});
+    headers.set('Authorization', 'Bearer ' + token);
+
+    const requestInit = { ...init, headers };
+    let timeoutId = null;
+    if (controller) {
+        requestInit.signal = controller.signal;
+        timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    }
+
+    try {
+        return await fetch(url, requestInit);
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+    }
+}
+
+async function authenticatedFetch(url, init = {}, timeoutMs = API_FETCH_TIMEOUT_MS) {
+    let token = await getValidToken(false);
+    let response = await fetchOnce(url, init, token, timeoutMs);
+
+    if (response.status !== 401) return response;
+
+    globalToken = null;
+    tokenExpiresAt = 0;
+    clearTokenRefreshTimer();
+
+    token = await requestAccessToken(false);
+    if (!token) return response;
+    return fetchOnce(url, init, token, timeoutMs);
+}
+
+async function fetchPhotoBlob(photo) {
+    const response = await authenticatedFetch(
+        photo.baseUrl + IMAGE_SIZE,
+        {},
+        IMAGE_FETCH_TIMEOUT_MS
+    );
+
+    if (!response.ok) {
+        throw new Error('Image request failed: HTTP ' + response.status);
+    }
+
+    const blob = await response.blob();
+    if (!blob.size) throw new Error('Image response was empty');
+    return blob;
+}
+
+function cacheBlob(key, blob) {
+    memoryBlobCache.delete(key);
+    memoryBlobCache.set(key, blob);
+
+    while (memoryBlobCache.size > MAX_MEMORY_BLOBS) {
+        const oldestKey = memoryBlobCache.keys().next().value;
+        memoryBlobCache.delete(oldestKey);
+    }
+}
+
+async function getPhotoBlob(photo) {
+    const key = getPhotoKey(photo);
+    if (memoryBlobCache.has(key)) {
+        const blob = memoryBlobCache.get(key);
+        cacheBlob(key, blob);
+        return blob;
+    }
+
+    if (pendingBlobLoads.has(key)) {
+        return pendingBlobLoads.get(key);
+    }
+
+    const loadPromise = (async () => {
+        let blob = await dbGetMedia(key);
+        if (!blob) {
+            blob = await fetchPhotoBlob(photo);
+            await dbPutMedia(key, blob);
+        }
+
+        cacheBlob(key, blob);
+        return blob;
+    })();
+
+    pendingBlobLoads.set(key, loadPromise);
+    try {
+        return await loadPromise;
+    } finally {
+        pendingBlobLoads.delete(key);
+    }
+}
+// ---- End API and media loading ----
+
+// ---- Persistent background prefetch ----
+function scheduleBulkPrefetch() {
+    for (const photo of allPhotos) {
+        const key = getPhotoKey(photo);
+        if (bulkPrefetchCompleted.has(key) || bulkPrefetchScheduled.has(key)) {
+            continue;
+        }
+        bulkPrefetchScheduled.add(key);
+        bulkPrefetchQueue.push(photo);
+    }
+    pumpBulkPrefetch();
+}
+
+function pumpBulkPrefetch() {
+    while (
+        bulkPrefetchActive < BULK_PREFETCH_CONCURRENCY &&
+        bulkPrefetchQueue.length > 0
+    ) {
+        const photo = bulkPrefetchQueue.shift();
+        const key = getPhotoKey(photo);
+        bulkPrefetchActive++;
+
+        getPhotoBlob(photo)
+            .then(() => {
+                bulkPrefetchCompleted.add(key);
+            })
+            .catch(error => {
+                console.warn('Background prefetch failed:', key, error);
+                bulkPrefetchScheduled.delete(key);
+
+                if (error.code !== 'AUTH_REQUIRED') {
+                    setTimeout(scheduleBulkPrefetch, 15000);
+                }
+            })
+            .finally(() => {
+                bulkPrefetchActive--;
+                pumpBulkPrefetch();
+            });
+    }
+}
+
+function pumpSlidePrefetch() {
+    for (const photo of slideQueue.slice(0, PREFETCH_AHEAD)) {
+        const key = getPhotoKey(photo);
+        if (!memoryBlobCache.has(key) && !pendingBlobLoads.has(key)) {
+            getPhotoBlob(photo).catch(error => {
+                console.warn('Slide prefetch failed:', key, error);
+            });
+        }
+    }
+}
+// ---- End persistent background prefetch ----
+
+// ---- Picker sessions ----
+function sessionUrl(sessionId) {
+    return API_BASE + '/sessions/' + encodeURIComponent(sessionId);
+}
+
+function mediaItemsUrl(sessionId, pageToken) {
+    const url = new URL(API_BASE + '/mediaItems');
+    url.searchParams.set('sessionId', sessionId);
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    return url.toString();
+}
+
+async function createPickerSession() {
+    const response = await authenticatedFetch(API_BASE + '/sessions', {
+        method: 'POST'
+    });
+
+    if (!response.ok) {
+        throw new Error('Could not create picker session: HTTP ' + response.status);
+    }
+    return response.json();
+}
+
+function queuePickerSession(session) {
+    const timeoutMs = parseDuration(
+        session.pollingConfig && session.pollingConfig.timeoutIn,
+        DEFAULT_SESSION_TIMEOUT_MS
+    );
+
+    pollQueue.push({
+        sessionId: session.id,
+        deadline: Date.now() + timeoutMs,
+        interval: parseDuration(
+            session.pollingConfig && session.pollingConfig.pollInterval,
+            DEFAULT_POLL_INTERVAL_MS
+        )
+    });
+    processQueue();
+}
+
+async function listSessionMediaItems(sessionId) {
+    const items = [];
+    let pageToken = null;
+
+    do {
+        const response = await authenticatedFetch(
+            mediaItemsUrl(sessionId, pageToken)
+        );
+        if (!response.ok) {
+            throw new Error('Could not list photos: HTTP ' + response.status);
+        }
+
+        const data = await response.json();
+        if (Array.isArray(data.mediaItems)) {
+            items.push(...data.mediaItems);
+        }
+        pageToken = data.nextPageToken || null;
+    } while (pageToken);
+
+    return items;
+}
+
+async function deletePickerSession(sessionId) {
+    try {
+        await authenticatedFetch(sessionUrl(sessionId), { method: 'DELETE' });
+    } catch (error) {
+        console.warn('Could not delete picker session:', error);
+    }
+}
+
+async function mergePhotos(items) {
+    const byKey = new Map(allPhotos.map(photo => [getPhotoKey(photo), photo]));
+    const byBaseUrl = new Map(allPhotos.map(photo => [photo.baseUrl, photo]));
+    let addedCount = 0;
+    let changed = false;
+
+    for (const item of items) {
+        const photo = normalizePhoto(item);
+        if (!photo) continue;
+
+        const existing = byKey.get(getPhotoKey(photo)) || byBaseUrl.get(photo.baseUrl);
+        if (existing) {
+            changed = changed || existing.baseUrl !== photo.baseUrl || existing.mimeType !== photo.mimeType;
+            byBaseUrl.delete(existing.baseUrl);
+            existing.baseUrl = photo.baseUrl;
+            existing.mimeType = photo.mimeType;
+            byBaseUrl.set(existing.baseUrl, existing);
+            continue;
+        }
+
+        allPhotos.push(photo);
+        byKey.set(getPhotoKey(photo), photo);
+        byBaseUrl.set(photo.baseUrl, photo);
+        addedCount++;
+    }
+
+    if (addedCount > 0 || changed) {
+        await dbPut('photos', allPhotos);
+        updatePhotoCount();
+        if (addedCount > 0 && !slideshowStarted) startSlideshow();
+        if (addedCount > 0) refillQueue();
+        scheduleBulkPrefetch();
+        pumpSlidePrefetch();
+    }
+
+    return addedCount;
+}
+
+async function processQueue() {
+    if (pollInProgress || pollQueue.length === 0) return;
+
+    pollInProgress = true;
+    const currentSession = pollQueue[0];
+    let nextPollDelay = currentSession.interval;
+
+    try {
+        if (Date.now() >= currentSession.deadline) {
+            console.warn('Picker session timed out:', currentSession.sessionId);
+            pollQueue.shift();
+            await deletePickerSession(currentSession.sessionId);
+            return;
+        }
+
+        const response = await authenticatedFetch(
+            sessionUrl(currentSession.sessionId)
+        );
+
+        if (response.status === 404) {
+            pollQueue.shift();
+            return;
+        }
+        if (!response.ok) {
+            throw new Error('Could not poll picker session: HTTP ' + response.status);
+        }
+
+        const session = await response.json();
+        currentSession.interval = parseDuration(
+            session.pollingConfig && session.pollingConfig.pollInterval,
+            currentSession.interval
+        );
+        nextPollDelay = currentSession.interval;
+
+        if (!session.mediaItemsSet) return;
+
+        const items = await listSessionMediaItems(currentSession.sessionId);
+        await mergePhotos(items);
+        pollQueue.shift();
+        await deletePickerSession(currentSession.sessionId);
+    } catch (error) {
+        console.error('Picker polling failed:', error);
+        nextPollDelay = error.code === 'AUTH_REQUIRED' ? 15000 : 5000;
+    } finally {
+        pollInProgress = false;
+        if (pollQueue.length > 0) {
+            setTimeout(processQueue, nextPollDelay);
+        }
+    }
+}
+// ---- End Picker sessions ----
+
+// ---- Slideshow ----
+function updatePhotoCount() {
+    document.getElementById('heartbeat').innerText = allPhotos.length;
+}
+
+function shuffle(items) {
+    for (let index = items.length - 1; index > 0; index--) {
+        const randomIndex = Math.floor(Math.random() * (index + 1));
+        [items[index], items[randomIndex]] = [items[randomIndex], items[index]];
+    }
+    return items;
+}
+
+function refillQueue() {
+    const queuedKeys = new Set(slideQueue.map(getPhotoKey));
+    const buildCandidates = () => allPhotos.filter(photo => {
+        const key = getPhotoKey(photo);
+        return (
+            !queuedKeys.has(key) &&
+            !playedPhotoKeys.has(key) &&
+            key !== currentPhotoKey
+        );
+    });
+
+    let candidates = buildCandidates();
+    if (candidates.length === 0) {
+        playedPhotoKeys.clear();
+        candidates = buildCandidates();
+    }
+
+    shuffle(candidates);
+    while (slideQueue.length < QUEUE_SIZE && candidates.length > 0) {
+        const photo = candidates.shift();
+        slideQueue.push(photo);
+        queuedKeys.add(getPhotoKey(photo));
+    }
+}
+
+function revokeObjectUrl(url) {
+    if (url && url.startsWith('blob:')) {
+        URL.revokeObjectURL(url);
+    }
+}
+
+function displayPhoto(blob, photo) {
+    const img1 = document.getElementById('img1');
+    const img2 = document.getElementById('img2');
+    const bg1 = document.getElementById('bg1');
+    const bg2 = document.getElementById('bg2');
+    const showingImg1 = img1.style.opacity === '1';
+
+    const nextImg = showingImg1 ? img2 : img1;
+    const currentImg = showingImg1 ? img1 : img2;
+    const nextBg = showingImg1 ? bg2 : bg1;
+    const currentBg = showingImg1 ? bg1 : bg2;
+    const oldObjectUrl = currentImg.src;
+    const objectUrl = URL.createObjectURL(blob);
+    const origins = ['0% 0%', '100% 0%', '0% 100%', '100% 100%', '50% 50%'];
+    const origin = origins[Math.floor(Math.random() * origins.length)];
+
+    nextImg.style.transition = 'none';
+    nextImg.style.transform = 'scale(1)';
+    nextImg.style.transformOrigin = origin;
+    nextBg.style.transition = 'none';
+    nextBg.style.transform = 'scale(1)';
+    nextImg.src = objectUrl;
+    nextBg.src = objectUrl;
+    void nextImg.offsetHeight;
+
+    nextImg.style.transition = 'transform 5s ease-out, opacity 2s';
+    nextImg.style.transform = 'scale(1.05)';
+    nextImg.style.opacity = '1';
+    nextBg.style.transition = 'opacity 2s';
+    nextBg.style.opacity = '1';
+
+    currentImg.style.opacity = '0';
+    currentBg.style.opacity = '0';
+
+    setTimeout(() => revokeObjectUrl(oldObjectUrl), 2200);
+    currentPhotoKey = getPhotoKey(photo);
+}
+
+function scheduleNextSlide(delayMs) {
+    if (nextSlideTimer) clearTimeout(nextSlideTimer);
+    nextSlideTimer = setTimeout(() => {
+        nextSlideTimer = null;
+        advanceSlide();
+    }, delayMs);
+}
+
+async function advanceSlide() {
+    if (advancing || !slideshowStarted || allPhotos.length === 0) return;
+
+    advancing = true;
+    let photo = null;
+
+    try {
+        refillQueue();
+        photo = slideQueue.shift();
+        if (!photo) {
+            photo = allPhotos[Math.floor(Math.random() * allPhotos.length)];
+        }
+
+        const key = getPhotoKey(photo);
+        playedPhotoKeys.add(key);
+        refillQueue();
+        pumpSlidePrefetch();
+
+        const blob = await getPhotoBlob(photo);
+        displayPhoto(blob, photo);
+        lastTransitionTime = Date.now();
+        scheduleNextSlide(SLIDE_INTERVAL_MS);
+    } catch (error) {
+        console.error('Slide error:', error);
+        if (photo) slideQueue.push(photo);
+        scheduleNextSlide(RETRY_INTERVAL_MS);
+    } finally {
+        advancing = false;
+    }
+}
+
+function startSlideshow() {
+    if (slideshowStarted || allPhotos.length === 0) return;
+
+    slideshowStarted = true;
+    document.getElementById('slideshow').style.display = 'block';
+    document.getElementById('add-btn').style.display = 'block';
+    updatePhotoCount();
+    refillQueue();
+    scheduleBulkPrefetch();
+    pumpSlidePrefetch();
+    advanceSlide();
+}
+// ---- End Slideshow ----
 
 async function loadFromStorage() {
-    const saved = await dbGet('photos');
-    const token = await dbGet('token');
-    if (saved && token) {
-        allPhotos = saved;
-        updateAuth(token);
+    try {
+        const saved = await dbGet('photos');
+        if (!Array.isArray(saved)) return false;
+
+        allPhotos = saved.map(normalizePhoto).filter(Boolean);
+        if (allPhotos.length === 0) return false;
+
+        updatePhotoCount();
         return true;
+    } catch (error) {
+        console.error('Could not restore photos:', error);
+        return false;
     }
-    return false;
 }
 
-function resetPhotos() {
-    if (confirm('Reset all photo list?')) {
-        dbClear().then(() => location.reload());
+async function openPicker() {
+    const popup = window.open('about:blank', '_blank');
+
+    try {
+        const token = await requestAccessToken(true);
+        if (!token) {
+            if (popup) popup.close();
+            return;
+        }
+
+        const session = await createPickerSession();
+        const pickerUri = session.pickerUri.replace(/\/$/, '') + '/autoclose';
+
+        if (popup) {
+            popup.location.replace(pickerUri);
+        } else {
+            window.open(pickerUri, '_blank');
+        }
+
+        document.getElementById('login-btn').style.display = 'none';
+        document.getElementById('add-btn').style.display = 'block';
+        queuePickerSession(session);
+    } catch (error) {
+        console.error('Could not open Google Photos Picker:', error);
+        if (popup) popup.close();
     }
 }
+
+async function addMorePhotos() {
+    await openPicker();
+}
+
+async function resetPhotos() {
+    if (!confirm('Reset all photo list?')) return;
+
+    try {
+        await dbClearAll();
+        location.reload();
+    } catch (error) {
+        console.error('Could not reset photos:', error);
+    }
+}
+
+document.getElementById('login-btn').onclick = openPicker;
 
 window.onload = async () => {
     if (await loadFromStorage()) {
         document.getElementById('login-btn').style.display = 'none';
-        startSlideshow(globalToken);
         document.getElementById('add-btn').style.display = 'block';
+        startSlideshow();
     }
 };
 
-document.getElementById('login-btn').onclick = function() {
-    const client = google.accounts.oauth2.initTokenClient({
-        client_id: CLIENT_ID,
-        scope: 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly',
-        callback: async (res) => {
-            if (res.access_token) {
-                updateAuth(res.access_token);
-                await dbPut('token', res.access_token);
-                const session = await fetch('https://photospicker.googleapis.com/v1/sessions', {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Bearer ' + res.access_token }
-                }).then(r => r.json());
-                window.open(session.pickerUri, '_blank');
-                document.getElementById('login-btn').style.display = 'none';
-                queuePhotos(globalToken, session.id);
-            }
-        }
-    });
-    client.requestAccessToken();
-};
-
-async function addMorePhotos() {
-    if (!globalToken) {
-        document.getElementById('login-btn').style.display = 'block';
-        document.getElementById('login-btn').click();
-        return;
+setInterval(() => {
+    if (
+        slideshowStarted &&
+        !advancing &&
+        Date.now() - lastTransitionTime > 60000
+    ) {
+        advanceSlide();
     }
-    const response = await fetch('https://photospicker.googleapis.com/v1/sessions', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + globalToken }
-    });
-
-    if (response.status === 401) {
-        await dbPut('token', '');
-        document.getElementById('login-btn').style.display = 'block';
-        document.getElementById('login-btn').click();
-        return;
-    }
-
-    const session = await response.json();
-    window.open(session.pickerUri, '_blank');
-    pollQueue.push({ token: globalToken, sessionId: session.id });
-    processQueue();
-}
-
-function queuePhotos(token, sessionId) {
-    pollQueue.push({ token, sessionId });
-    processQueue();
-}
-
-async function processQueue() {
-    if (pollInProgress) return;
-    if (pollQueue.length === 0) return;
-
-    pollInProgress = true;
-    const { token, sessionId } = pollQueue[0];
-
-    let allItems = [];
-    let nextPageToken = null;
-
-    while (true) {
-        const url = 'https://photospicker.googleapis.com/v1/mediaItems?sessionId=' + sessionId + (nextPageToken ? '&pageToken=' + nextPageToken : '');
-        const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
-        if (res.status !== 200) break;
-        const data = await res.json();
-        if (data.mediaItems) allItems.push(...data.mediaItems);
-        nextPageToken = data.nextPageToken;
-        if (!nextPageToken) break;
-    }
-
-    if (allItems.length === 0) {
-        pollInProgress = false;
-        setTimeout(() => { pollInProgress = false; processQueue(); }, 1000);
-        return;
-    }
-
-    const newItems = allItems.map(p => ({
-        baseUrl: p.mediaFile ? p.mediaFile.baseUrl : p.baseUrl
-    })).filter(p => p.baseUrl);
-
-    allPhotos.push(...newItems);
-    await dbPut('photos', allPhotos);
-
-    console.log('Added', newItems.length, 'photos. Total:', allPhotos.length);
-    document.getElementById('heartbeat').innerText = allPhotos.length;
-
-    if (document.getElementById('slideshow').style.display === 'none') {
-        startSlideshow(token);
-    }
-    document.getElementById('add-btn').style.display = 'block';
-    pollQueue.shift();
-    pollInProgress = false;
-    if (pollQueue.length > 0) processQueue();
-}
-
-// ---- Slideshow queue ----
-const slideQueue = [];
-
-function refillQueue() {
-    const usedUrls = new Set(slideQueue.map(p => p.baseUrl));
-    while (slideQueue.length < 10 && allPhotos.length > 0) {
-        for (let tries = 0; tries < 30; tries++) {
-            const pick = allPhotos[Math.floor(Math.random() * allPhotos.length)];
-            if (!usedUrls.has(pick.baseUrl)) {
-                slideQueue.push(pick);
-                usedUrls.add(pick.baseUrl);
-                break;
-            }
-        }
-    }
-}
-
-function startSlideshow(token) {
-    document.getElementById('slideshow').style.display = 'block';
-    document.getElementById('add-btn').style.display = 'block';
-    let showingImg1 = true;
-    const img1 = document.getElementById('img1'), img2 = document.getElementById('img2');
-    const bg1 = document.getElementById('bg1'), bg2 = document.getElementById('bg2');
-
-    document.getElementById('heartbeat').innerText = allPhotos.length;
-
-    async function next() {
-        if (allPhotos.length === 0) return;
-
-        refillQueue();
-
-        const item = slideQueue.length > 0 ? slideQueue.shift() : allPhotos[Math.floor(Math.random() * allPhotos.length)];
-        let objectUrl = null;
-
-        try {
-            // prefetch�� blob�� ������ ���, ������ fallback
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 3000);
-            let resp;
-            try {
-                resp = await fetch(item.baseUrl + '=w1920-h1080', { 
-                    headers: { 'Authorization': 'Bearer ' + token },
-                    signal: controller.signal 
-                });
-            } finally {
-                clearTimeout(timeoutId);
-            }
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            const blob = await resp.blob();
-            objectUrl = URL.createObjectURL(blob);
-
-            const nextImg = showingImg1 ? img2 : img1;
-            const currentImg = showingImg1 ? img1 : img2;
-            const nextBg = showingImg1 ? bg2 : bg1;
-            const currentBg = showingImg1 ? bg1 : bg2;
-
-            const origins = ['0% 0%', '100% 0%', '0% 100%', '100% 100%', '50% 50%'];
-            const origin = origins[Math.floor(Math.random() * origins.length)];
-            nextImg.style.transition = 'none';
-            nextImg.style.transform = 'scale(1)';
-            nextImg.style.transformOrigin = origin;
-            nextBg.style.transition = 'none';
-            nextBg.style.transform = 'scale(1)';
-            void nextImg.offsetHeight;
-
-            nextImg.src = objectUrl;
-            nextBg.src = objectUrl;
-
-            nextImg.style.transition = 'transform 5s ease-out, opacity 2s';
-            nextImg.style.transform = 'scale(1.05)';
-            nextImg.style.opacity = 1;
-            nextBg.style.transition = 'opacity 2s';
-            nextBg.style.opacity = 1;
-
-            currentImg.style.opacity = 0;
-            currentBg.style.opacity = 0;
-
-            setTimeout(next, 5000);
-
-            setTimeout(() => {
-                if (currentImg.src.startsWith('blob:')) URL.revokeObjectURL(currentImg.src);
-                if (currentBg.src.startsWith('blob:')) URL.revokeObjectURL(currentBg.src);
-            }, 2200);
-
-            showingImg1 = !showingImg1;
-            lastTransitionTime = Date.now();
-        } catch (e) {
-            console.error('Slide error:', e.message || e);
-            if (objectUrl) URL.revokeObjectURL(objectUrl);
-            setTimeout(next, 5000);
-        }
-        
-       
-    }
-
-    next();
-}
-
-
-
-
-
+}, 10000);
