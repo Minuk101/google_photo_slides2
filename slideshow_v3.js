@@ -224,3 +224,4 @@ function startSlideshow(token) {
 
     next();
 }
+
